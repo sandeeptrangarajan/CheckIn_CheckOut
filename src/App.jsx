@@ -23,7 +23,8 @@ import {
   RefreshCw,
   AlertCircle,
   Database,
-  Hash
+  Hash,
+  KeyRound
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -31,12 +32,14 @@ const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
 
 export default function App() {
   const [participants, setParticipants] = useState([]);
-  const [dbStatus, setDbStatus] = useState('connecting'); // 'connecting' | 'connected' | 'offline'
+  const [dbStatus, setDbStatus] = useState('connecting');
 
-  const [activeTab, setActiveTab] = useState('register'); // 'register' | 'scanner' | 'admin'
+  const [activeTab, setActiveTab] = useState('login'); // 'login' | 'scanner' | 'admin'
+  const [loginMode, setLoginMode] = useState('register'); // 'register' | 'existing_login'
 
-  // Registration Form State (Team Number, Name of Student, Email, Section)
+  // Login / Registration Form State
   const [formData, setFormData] = useState({ teamNumber: '', name: '', email: '', section: '' });
+  const [loginTeamInput, setLoginTeamInput] = useState('');
   const [activeUser, setActiveUser] = useState(null);
 
   // Common Master QR Code Data URL
@@ -162,17 +165,46 @@ export default function App() {
     XLSX.writeFile(workbook, `Hackathon_Attendance_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
-  // Register Participant row in MongoDB
-  const handleRegisterUser = async (e) => {
+  // Login via Existing Team Number
+  const handleExistingTeamLogin = (e) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
-      alert('Please fill out all required fields.');
+    if (!loginTeamInput.trim()) {
+      alert('Please enter a Team Number.');
       return;
     }
 
-    const formattedTeamNumber = formData.teamNumber && formData.teamNumber.trim() 
-      ? formData.teamNumber.trim().toUpperCase() 
-      : `TEAM-${Math.floor(100 + Math.random() * 900)}`;
+    const searchStr = loginTeamInput.trim().toLowerCase();
+    const foundUser = participants.find(p => 
+      (p.teamNumber && p.teamNumber.toLowerCase() === searchStr) ||
+      (p.id && p.id.toLowerCase() === searchStr) ||
+      (p.email && p.email.toLowerCase() === searchStr)
+    );
+
+    if (foundUser) {
+      setActiveUser(foundUser);
+      setActiveTab('scanner');
+      setScanNotice({
+        type: 'success',
+        title: `Welcome Team ${foundUser.teamNumber}!`,
+        message: `Logged in as ${foundUser.name}. Scanner terminal active.`
+      });
+      confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
+    } else {
+      alert(`Team Number "${loginTeamInput}" not found in database. Please register below.`);
+      setFormData(prev => ({ ...prev, teamNumber: loginTeamInput.toUpperCase() }));
+      setLoginMode('register');
+    }
+  };
+
+  // Register New Student & Team Row in MongoDB
+  const handleRegisterUser = async (e) => {
+    e.preventDefault();
+    if (!formData.teamNumber.trim() || !formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
+      alert('Please fill out all fields including Team Number.');
+      return;
+    }
+
+    const formattedTeamNumber = formData.teamNumber.trim().toUpperCase();
 
     try {
       const res = await fetch(`${API_BASE_URL}/participants/register`, {
@@ -197,8 +229,8 @@ export default function App() {
         setActiveTab('scanner');
         setScanNotice({
           type: 'info',
-          title: `MongoDB Saved: Team ${formattedUser.teamNumber} - ${formattedUser.name}`,
-          message: `Database row created in MongoDB! Scanner terminal active.`
+          title: `Registered: Team ${formattedUser.teamNumber} (${formattedUser.name})`,
+          message: `Saved row in MongoDB database. Scanner terminal ready!`
         });
 
         confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
@@ -233,8 +265,8 @@ export default function App() {
     if (!userToUpdate) {
       setScanNotice({
         type: 'error',
-        title: 'No User Selected',
-        message: 'Please register or select a student from the dropdown first.'
+        title: 'No Student Selected',
+        message: 'Please login or register a team number first.'
       });
       return;
     }
@@ -258,7 +290,7 @@ export default function App() {
         setScanNotice({
           type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
           title: result.message,
-          message: `Team ${updatedUser.teamNumber} database row updated in MongoDB Atlas`
+          message: `Team ${updatedUser.teamNumber} database row updated in MongoDB`
         });
 
         if (updatedUser.status === 'checked-in') {
@@ -387,12 +419,12 @@ export default function App() {
         <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)' }}>
-              <Database style={{ width: '24px', height: '24px', color: '#fff' }} />
+              <KeyRound style={{ width: '24px', height: '24px', color: '#fff' }} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                  HACKPORTAL MongoDB Portal
+                  HACKPORTAL Gate System
                 </h1>
                 <span style={{
                   padding: '3px 10px',
@@ -406,18 +438,18 @@ export default function App() {
                   {dbStatus === 'connected' ? 'MongoDB Atlas Connected' : 'Local Fallback'}
                 </span>
               </div>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Schema: Team Number | Student Name | Check-In Time | Check-Out Time</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Team Number Login & Gate Attendance Scanner</p>
             </div>
           </div>
 
           {/* Nav Tabs */}
           <nav style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
             <button
-              onClick={() => setActiveTab('register')}
-              className={`btn ${activeTab === 'register' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab('login')}
+              className={`btn ${activeTab === 'login' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ padding: '8px 16px', fontSize: '0.85rem' }}
             >
-              <UserPlus size={16} /> 1. Enter Details
+              <LogIn size={16} /> 1. Team Login / Register
             </button>
             <button
               onClick={() => setActiveTab('scanner')}
@@ -465,69 +497,152 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 1: DETAILS ENTRY */}
-        {activeTab === 'register' && (
-          <div className="animate-fade-in" style={{ maxWidth: '600px', margin: '0 auto' }}>
+        {/* TAB 1: TEAM NUMBER LOGIN & REGISTRATION PAGE */}
+        {activeTab === 'login' && (
+          <div className="animate-fade-in" style={{ maxWidth: '540px', margin: '0 auto' }}>
             <div className="glass-panel" style={{ padding: '36px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                <div style={{ padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '10px', color: 'var(--primary)' }}>
-                  <UserPlus size={24} />
-                </div>
-                <div>
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Enter Student & Team Details</h2>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Creates a database row in MongoDB (Team Number, Name, Check-In/Out)</p>
-                </div>
+
+              {/* Login / Register Toggle Header */}
+              <div style={{ display: 'flex', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '28px' }}>
+                <button
+                  onClick={() => setLoginMode('register')}
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    background: loginMode === 'register' ? 'var(--primary)' : 'transparent',
+                    color: loginMode === 'register' ? '#fff' : 'var(--text-muted)'
+                  }}
+                >
+                  <UserPlus size={16} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+                  New Registration
+                </button>
+                <button
+                  onClick={() => setLoginMode('existing_login')}
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    background: loginMode === 'existing_login' ? 'var(--primary)' : 'transparent',
+                    color: loginMode === 'existing_login' ? '#fff' : 'var(--text-muted)'
+                  }}
+                >
+                  <KeyRound size={16} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+                  Login with Team #
+                </button>
               </div>
 
-              <form onSubmit={handleRegisterUser} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* MODE A: LOGIN WITH EXISTING TEAM NUMBER */}
+              {loginMode === 'existing_login' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Team Number (e.g. TEAM-101) *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. TEAM-101, TEAM-204"
-                    value={formData.teamNumber}
-                    onChange={e => setFormData({ ...formData, teamNumber: e.target.value })}
-                  />
-                </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '10px', color: 'var(--primary)' }}>
+                      <KeyRound size={24} />
+                    </div>
+                    <div>
+                      <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Team Portal Login</h2>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Enter your registered Team Number to launch scanner</p>
+                    </div>
+                  </div>
 
+                  <form onSubmit={handleExistingTeamLogin} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
+                        <Hash size={15} style={{ display: 'inline', color: 'var(--primary)', verticalAlign: 'middle' }} /> Enter Team Number *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. TEAM-101, TEAM-204"
+                        value={loginTeamInput}
+                        onChange={e => setLoginTeamInput(e.target.value)}
+                        style={{ fontSize: '1rem', fontWeight: 700, letterSpacing: '0.5px' }}
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" style={{ padding: '14px', width: '100%', fontWeight: 700 }}>
+                      <LogIn size={18} /> Login & Launch Scanner
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* MODE B: NEW REGISTRATION FORM WITH TEAM NUMBER */}
+              {loginMode === 'register' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Name of the Student *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Enter student full name"
-                    value={formData.name}
-                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                  />
-                </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '10px', color: 'var(--primary)' }}>
+                      <UserPlus size={24} />
+                    </div>
+                    <div>
+                      <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Participant Registration</h2>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Saves student & team details into MongoDB Atlas</p>
+                    </div>
+                  </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Email Address *</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="student.email@domain.com"
-                    value={formData.email}
-                    onChange={e => setFormData({ ...formData, email: e.target.value })}
-                  />
-                </div>
+                  <form onSubmit={handleRegisterUser} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '6px' }}>
+                        <Hash size={14} style={{ display: 'inline', color: 'var(--primary)', verticalAlign: 'middle' }} /> Team Number *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. TEAM-101"
+                        value={formData.teamNumber}
+                        onChange={e => setFormData({ ...formData, teamNumber: e.target.value })}
+                        style={{ fontWeight: 700 }}
+                      />
+                    </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Class / Section *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. CSE-A, ECE-B"
-                    value={formData.section}
-                    onChange={e => setFormData({ ...formData, section: e.target.value })}
-                  />
-                </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Name of the Student *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Enter student full name"
+                        value={formData.name}
+                        onChange={e => setFormData({ ...formData, name: e.target.value })}
+                      />
+                    </div>
 
-                <button type="submit" className="btn btn-primary" style={{ marginTop: '10px', padding: '14px', width: '100%', fontWeight: 700 }}>
-                  <Database size={18} /> Save Row to MongoDB & Launch Camera Scanner
-                </button>
-              </form>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Email Address *</label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="student.email@domain.com"
+                        value={formData.email}
+                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Class / Section *</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. CSE-A, ECE-B"
+                        value={formData.section}
+                        onChange={e => setFormData({ ...formData, section: e.target.value })}
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" style={{ marginTop: '6px', padding: '14px', width: '100%', fontWeight: 700 }}>
+                      <Database size={18} /> Register Team & Launch Camera Scanner
+                    </button>
+                  </form>
+                </div>
+              )}
+
             </div>
           </div>
         )}
@@ -543,7 +658,7 @@ export default function App() {
               </div>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '4px' }}>Real Camera Scanner</h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-                Selected Student: <strong style={{ color: '#fff' }}>{activeUser ? `${activeUser.name} (${activeUser.teamNumber})` : 'Select student below'}</strong>
+                Logged In Student: <strong style={{ color: '#fff' }}>{activeUser ? `${activeUser.name} (${activeUser.teamNumber})` : 'Select below'}</strong>
               </p>
 
               {/* Webcam Viewport */}
@@ -575,7 +690,7 @@ export default function App() {
               {/* User Selection & Scan Button Simulator */}
               <div style={{ textAlign: 'left', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                  Select Student / Team to Process Scan:
+                  Select Active Team / Student:
                 </label>
 
                 <select
@@ -588,7 +703,7 @@ export default function App() {
                 >
                   {participants.map(p => (
                     <option key={p.id || p.userId} value={p.id || p.userId}>
-                      Team {p.teamNumber} - {p.name} ({p.section}) [{p.status.toUpperCase()}]
+                      {p.teamNumber || 'TEAM-101'} - {p.name} ({p.section}) [{p.status.toUpperCase()}]
                     </option>
                   ))}
                 </select>
@@ -627,7 +742,7 @@ export default function App() {
 
               {activeUser && (
                 <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', textAlign: 'left', fontSize: '0.8rem' }}>
-                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>SELECTED ROW:</div>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>LOGGED IN ROW:</div>
                   <div style={{ fontWeight: 700, color: '#fff' }}>Team {activeUser.teamNumber}: {activeUser.name} ({activeUser.section})</div>
                   <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
                     <span style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
@@ -717,7 +832,7 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                 <div>
                   <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>MongoDB Attendance Master Roster</h2>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Each row contains Team Number, Student Name, Check-In Time & Check-Out Time</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Database rows with Team Number, Student Name, Check-In & Check-Out Time</p>
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
