@@ -1,16 +1,35 @@
-# React + Vite
+# 🚀 Hackathon Attendance Gate System
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An interactive full-stack QR code attendance system built with **React (Vite)**, **Lucide Icons**, **Express**, and **MongoDB Atlas Database**.
 
-Currently, two official plugins are available:
+## ✨ Key Capabilities
+- **Team Number Login & Registration**: Returning users enter Team Number to skip registration and launch the scanner immediately.
+- **Single Common Master Event QR Code**: Shared QR (`HACKATHON-GATE-2026`) used for all attendees.
+- **2-Step Scan Sequence**: 1st Scan = Check-In confirmation ➔ 2nd Scan = Check-Out confirmation.
+- **In-Between Time (Duration) Tracking**: Calculates exact elapsed duration (`e.g., 8h 30m 0s`) and stores it in MongoDB Atlas and Excel exports.
+- **Real Webcam Reader & Image Upload Fallback**: Powered by `Html5Qrcode`.
+- **Admin Roster & Manual Excel Exporter**: Export formatted `.xlsx` spreadsheets on demand.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🛠 Setup & Launch
 
-## React Compiler
+1. **MongoDB Express Backend**:
+   ```bash
+   cd server
+   npm install
+   node index.js
+   ```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+2. **Frontend React App**:
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-## Expanding the Oxlint configuration
+3. **Seed MongoDB Atlas Sample Data**:
+   ```bash
+   cd server
+   node seedData.js
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## 🔗 Repository
+[https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git](https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git)
