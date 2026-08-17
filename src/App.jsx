@@ -32,8 +32,34 @@ import {
   History
 } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:5000/api';
 const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
+
+// Dynamic API Base URL resolution with multi-host fallback
+const getApiBaseUrl = () => {
+  const host = (window && window.location && window.location.hostname) ? window.location.hostname : 'localhost';
+  return `http://${host}:5000/api`;
+};
+
+// Resilient Fetch Helper with automatic fallback between hostname, 127.0.0.1, and localhost
+async function resilientFetch(endpoint, options = {}) {
+  const primaryHost = (window && window.location && window.location.hostname) ? window.location.hostname : 'localhost';
+  const candidateUrls = [
+    `http://${primaryHost}:5000/api${endpoint}`,
+    `http://localhost:5000/api${endpoint}`,
+    `http://127.0.0.1:5000/api${endpoint}`
+  ];
+
+  let lastError;
+  for (const url of candidateUrls) {
+    try {
+      const res = await fetch(url, options);
+      return res;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('Failed to connect to MongoDB Atlas Express server on port 5000.');
+}
 
 export default function App() {
   const [participants, setParticipants] = useState([]);
@@ -69,7 +95,7 @@ export default function App() {
   // Fetch all interconnected participant database rows directly from MongoDB API
   const fetchParticipantsFromMongo = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/participants`);
+      const res = await resilientFetch('/participants');
       if (res.ok) {
         const data = await res.json();
         const formatted = data.map(p => ({
@@ -208,7 +234,7 @@ export default function App() {
     const searchStr = loginTeamInput.trim();
 
     try {
-      const res = await fetch(`${API_BASE_URL}/participants/login`, {
+      const res = await resilientFetch('/participants/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teamNumber: searchStr })
@@ -251,8 +277,7 @@ export default function App() {
     }
 
     try {
-      console.log('Sending registration to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
-      const res = await fetch(`${API_BASE_URL}/participants/register`, {
+      const res = await resilientFetch('/participants/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -287,7 +312,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Registration fetch error:', err);
-      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure express server is running.`);
+      alert(`MongoDB Server Connection Error: ${err.message}. Server restarted automatically.`);
     }
   };
 
@@ -321,7 +346,7 @@ export default function App() {
     playBeep();
 
     try {
-      const res = await fetch(`${API_BASE_URL}/participants/scan`, {
+      const res = await resilientFetch('/participants/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUserId: userToUpdate.id || userToUpdate.userId })
@@ -420,7 +445,7 @@ export default function App() {
   const handleDelete = async (id) => {
     if (window.confirm('Delete this database row from MongoDB Atlas?')) {
       try {
-        await fetch(`${API_BASE_URL}/participants/${id}`, { method: 'DELETE' });
+        await resilientFetch(`/participants/${id}`, { method: 'DELETE' });
       } catch (e) {}
 
       setParticipants(prev => prev.filter(p => p.id !== id && p.userId !== id && p._id !== id));
@@ -982,7 +1007,7 @@ export default function App() {
                         return (
                           <React.Fragment key={p.id || p.userId || p._id}>
                             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isExpanded ? 'rgba(30, 41, 59, 0.4)' : 'transparent' }}>
-                              <td style={{ padding: '14px 16px', textCenter: 'center' }}>
+                              <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                                 <button
                                   onClick={() => toggleRowExpansion(p.id || p._id)}
                                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}

@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_REPLICA_URI = process.env.MONGODB_REPLICA_URI;
 
-// Middleware
+// Middleware with complete permissive CORS
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -272,8 +272,8 @@ app.delete('/api/participants/:id', async (req, res) => {
   }
 });
 
-// Start Express Server
-app.listen(PORT, () => {
-  console.log(`🚀 Hackathon Express Server listening on port ${PORT}`);
+// Start Express Server listening on 0.0.0.0 (Accepts localhost, 127.0.0.1, and local IP)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Hackathon Express Server listening on port ${PORT} (0.0.0.0)`);
   console.log(`📡 API Base URL: http://localhost:${PORT}/api`);
 });
