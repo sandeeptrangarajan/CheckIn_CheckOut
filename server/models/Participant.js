@@ -42,6 +42,10 @@ const participantSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  duration: {
+    type: String,
+    default: null
+  },
   scanLogs: [
     {
       type: mongoose.Schema.Types.ObjectId,

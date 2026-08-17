@@ -24,7 +24,8 @@ import {
   AlertCircle,
   Database,
   Hash,
-  KeyRound
+  KeyRound,
+  HelpCircle
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -42,6 +43,9 @@ export default function App() {
   const [loginTeamInput, setLoginTeamInput] = useState('');
   const [activeUser, setActiveUser] = useState(null);
 
+  // Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState(null); // { user, actionType: 'check-in' | 'check-out' }
+
   // Common Master QR Code Data URL
   const [commonQrDataUrl, setCommonQrDataUrl] = useState('');
 
@@ -55,6 +59,30 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  // Helper function to calculate duration string on frontend
+  const calculateDuration = (checkInStr, checkOutStr) => {
+    try {
+      const inDate = new Date(checkInStr);
+      const outDate = new Date(checkOutStr);
+      const diffMs = Math.abs(outDate - inDate);
+      if (isNaN(diffMs)) return 'N/A';
+
+      const diffSecs = Math.floor(diffMs / 1000);
+      const hours = Math.floor(diffSecs / 3600);
+      const minutes = Math.floor((diffSecs % 3600) / 60);
+      const seconds = diffSecs % 60;
+
+      const parts = [];
+      if (hours > 0) parts.push(`${hours}h`);
+      if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+      parts.push(`${seconds}s`);
+
+      return parts.join(' ');
+    } catch (e) {
+      return 'N/A';
+    }
+  };
+
   // Fetch all interconnected participant database rows from MongoDB API on mount
   const fetchParticipantsFromMongo = async () => {
     try {
@@ -64,7 +92,8 @@ export default function App() {
         setParticipants(data.map(p => ({
           ...p,
           id: p.userId || p._id,
-          teamNumber: p.teamNumber || 'TEAM-101'
+          teamNumber: p.teamNumber || 'TEAM-101',
+          duration: p.duration || (p.checkInTime && p.checkOutTime ? calculateDuration(p.checkInTime, p.checkOutTime) : null)
         })));
         setDbStatus('connected');
       } else {
@@ -73,7 +102,7 @@ export default function App() {
     } catch (err) {
       console.warn('MongoDB API offline, fallback to LocalStorage:', err);
       setDbStatus('offline');
-      const saved = localStorage.getItem('hackathon_team_row_backup_v11');
+      const saved = localStorage.getItem('hackathon_duration_backup_v12');
       if (saved) setParticipants(JSON.parse(saved));
     }
   };
@@ -85,7 +114,7 @@ export default function App() {
   // Sync state fallback to LocalStorage
   useEffect(() => {
     if (participants.length > 0) {
-      localStorage.setItem('hackathon_team_row_backup_v11', JSON.stringify(participants));
+      localStorage.setItem('hackathon_duration_backup_v12', JSON.stringify(participants));
     }
   }, [participants]);
 
@@ -127,7 +156,7 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Manual Export to Excel
+  // Manual Export to Excel (Includes In-Between Duration Column)
   const exportToExcelManual = () => {
     if (participants.length === 0) {
       alert('No participant database rows to export.');
@@ -144,6 +173,7 @@ export default function App() {
       'Status': p.status.toUpperCase(),
       'Check-In Time': p.checkInTime || 'Pending',
       'Check-Out Time': p.checkOutTime || 'Pending',
+      'In-Between Time (Duration)': p.duration || (p.checkInTime && p.checkOutTime ? calculateDuration(p.checkInTime, p.checkOutTime) : 'Pending'),
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
@@ -160,6 +190,7 @@ export default function App() {
       { wch: 14 },
       { wch: 22 },
       { wch: 22 },
+      { wch: 26 },
     ];
 
     XLSX.writeFile(workbook, `Hackathon_Attendance_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -182,6 +213,7 @@ export default function App() {
 
     if (foundUser) {
       setActiveUser(foundUser);
+      // DIRECTLY THROW / REDIRECT TO SCANNER SECTION
       setActiveTab('scanner');
       setScanNotice({
         type: 'success',
@@ -190,13 +222,13 @@ export default function App() {
       });
       confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
     } else {
-      alert(`Team Number "${loginTeamInput}" not found in database. Please register below.`);
+      alert(`Team Number "${loginTeamInput}" not found. Creating new registration for Team ${loginTeamInput.toUpperCase()}...`);
       setFormData(prev => ({ ...prev, teamNumber: loginTeamInput.toUpperCase() }));
       setLoginMode('register');
     }
   };
 
-  // Register New Student & Team Row in MongoDB
+  // Register New Student & Team Row -> DIRECTLY THROW TO SCANNER SECTION
   const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.teamNumber.trim() || !formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
@@ -226,11 +258,12 @@ export default function App() {
         setActiveUser(formattedUser);
         setFormData({ teamNumber: '', name: '', email: '', section: '' });
         
+        // DIRECTLY REDIRECT TO SCANNER SECTION AFTER REGISTRATION
         setActiveTab('scanner');
         setScanNotice({
           type: 'info',
-          title: `Registered: Team ${formattedUser.teamNumber} (${formattedUser.name})`,
-          message: `Saved row in MongoDB database. Scanner terminal ready!`
+          title: `✓ Registration Complete!`,
+          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) registered in MongoDB. Ready to scan QR code!`
         });
 
         confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
@@ -250,26 +283,48 @@ export default function App() {
         status: 'registered',
         checkInTime: null,
         checkOutTime: null,
+        duration: null
       };
 
       setParticipants(prev => [newUser, ...prev]);
       setActiveUser(newUser);
       setFormData({ teamNumber: '', name: '', email: '', section: '' });
+
+      // DIRECTLY REDIRECT TO SCANNER SECTION
       setActiveTab('scanner');
     }
   };
 
-  // Core MongoDB Scan Processor (1st scan = Check-In, 2nd scan = Check-Out)
-  const processScanForUser = async (targetUserId) => {
+  // Step A: Trigger Scan Confirmation Request Prompt Modal
+  const initiateScanProcess = (targetUserId) => {
     const userToUpdate = participants.find(p => p.id === targetUserId || p.userId === targetUserId) || activeUser;
     if (!userToUpdate) {
       setScanNotice({
         type: 'error',
         title: 'No Student Selected',
-        message: 'Please login or register a team number first.'
+        message: 'Please login or select a team number first.'
       });
       return;
     }
+
+    if (userToUpdate.status === 'registered') {
+      setConfirmModal({ user: userToUpdate, actionType: 'check-in' });
+    } else if (userToUpdate.status === 'checked-in') {
+      setConfirmModal({ user: userToUpdate, actionType: 'check-out' });
+    } else {
+      setScanNotice({
+        type: 'warning',
+        title: 'Attendance Completed',
+        message: `Team ${userToUpdate.teamNumber} (${userToUpdate.name}) has already completed Check-In & Check-Out. Total In-Between Time: ${userToUpdate.duration || 'Completed'}`
+      });
+    }
+  };
+
+  // Step B: Execute Confirmed Scan (1st Scan = Check-In, 2nd Scan = Check-Out with In-Between Duration)
+  const executeConfirmedScan = async () => {
+    if (!confirmModal || !confirmModal.user) return;
+    const userToUpdate = confirmModal.user;
+    setConfirmModal(null);
 
     playBeep();
 
@@ -282,7 +337,11 @@ export default function App() {
 
       if (res.ok) {
         const result = await res.json();
-        const updatedUser = { ...result.participant, id: result.participant.userId };
+        const updatedUser = { 
+          ...result.participant, 
+          id: result.participant.userId,
+          duration: result.participant.duration || (result.participant.checkInTime && result.participant.checkOutTime ? calculateDuration(result.participant.checkInTime, result.participant.checkOutTime) : null)
+        };
 
         setParticipants(prev => prev.map(p => (p.id === updatedUser.id || p.userId === updatedUser.id) ? updatedUser : p));
         setActiveUser(updatedUser);
@@ -290,7 +349,9 @@ export default function App() {
         setScanNotice({
           type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
           title: result.message,
-          message: `Team ${updatedUser.teamNumber} database row updated in MongoDB`
+          message: updatedUser.status === 'checked-out' 
+            ? `In-between duration calculated & saved in MongoDB + Excel: ${updatedUser.duration}` 
+            : `Team ${updatedUser.teamNumber} check-in recorded in MongoDB Atlas.`
         });
 
         if (updatedUser.status === 'checked-in') {
@@ -308,14 +369,15 @@ export default function App() {
       console.warn('Fallback offline scan:', err);
       const nowFormatted = new Date().toLocaleString('en-IN', {
         day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', hour12: true
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
       });
 
       let updated;
       if (userToUpdate.status === 'registered') {
-        updated = { ...userToUpdate, status: 'checked-in', checkInTime: nowFormatted };
+        updated = { ...userToUpdate, status: 'checked-in', checkInTime: nowFormatted, duration: 'Active' };
       } else if (userToUpdate.status === 'checked-in') {
-        updated = { ...userToUpdate, status: 'checked-out', checkOutTime: nowFormatted };
+        const durationStr = calculateDuration(userToUpdate.checkInTime, nowFormatted);
+        updated = { ...userToUpdate, status: 'checked-out', checkOutTime: nowFormatted, duration: durationStr };
       } else {
         updated = userToUpdate;
       }
@@ -349,11 +411,11 @@ export default function App() {
           { fps: 10, qrbox: { width: 240, height: 240 } },
           (decodedText) => {
             const now = Date.now();
-            if (now - lastScanTime < 2500) return;
+            if (now - lastScanTime < 3000) return;
             lastScanTime = now;
 
             if (activeUser) {
-              processScanForUser(activeUser.id || activeUser.userId);
+              initiateScanProcess(activeUser.id || activeUser.userId);
             }
           },
           (err) => {}
@@ -414,6 +476,45 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#090d16', color: '#f8fafc' }}>
 
+      {/* CONFIRMATION PROMPT MODAL */}
+      {confirmModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="glass-panel animate-fade-in" style={{ maxWidth: '440px', width: '100%', padding: '28px', textAlign: 'center', border: '1px solid var(--primary)', boxShadow: '0 0 40px rgba(99, 102, 241, 0.3)' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: confirmModal.actionType === 'check-in' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(244, 63, 94, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto', color: confirmModal.actionType === 'check-in' ? '#10b981' : '#f43f5e' }}>
+              <HelpCircle size={32} />
+            </div>
+
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '8px' }}>
+              Confirm {confirmModal.actionType === 'check-in' ? 'Check-In' : 'Check-Out'}?
+            </h3>
+            
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
+              Do you want to log <strong>{confirmModal.actionType.toUpperCase()}</strong> for:<br/>
+              <strong style={{ color: '#fff', fontSize: '1rem', display: 'inline-block', marginTop: '6px' }}>
+                Team {confirmModal.user.teamNumber} — {confirmModal.user.name}
+              </strong>
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="btn btn-secondary"
+                style={{ flex: 1, padding: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeConfirmedScan}
+                className={`btn ${confirmModal.actionType === 'check-in' ? 'btn-success' : 'btn-danger'}`}
+                style={{ flex: 1, padding: '12px', fontWeight: 700 }}
+              >
+                Confirm {confirmModal.actionType === 'check-in' ? 'Check-In' : 'Check-Out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <header className="glass-panel" style={{ borderRadius: 0, borderTop: 0, borderLeft: 0, borderRight: 0, padding: '16px 32px', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
@@ -438,7 +539,7 @@ export default function App() {
                   {dbStatus === 'connected' ? 'MongoDB Atlas Connected' : 'Local Fallback'}
                 </span>
               </div>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Team Number Login & Gate Attendance Scanner</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Team Login ➔ Auto Scanner Redirect ➔ In-Between Time Tracking</p>
             </div>
           </div>
 
@@ -502,7 +603,7 @@ export default function App() {
           <div className="animate-fade-in" style={{ maxWidth: '540px', margin: '0 auto' }}>
             <div className="glass-panel" style={{ padding: '36px' }}>
 
-              {/* Login / Register Toggle Header */}
+              {/* Toggle Header */}
               <div style={{ display: 'flex', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '28px' }}>
                 <button
                   onClick={() => setLoginMode('register')}
@@ -549,7 +650,7 @@ export default function App() {
                     </div>
                     <div>
                       <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Team Portal Login</h2>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Enter your registered Team Number to launch scanner</p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Enter your Team Number to launch scanner</p>
                     </div>
                   </div>
 
@@ -575,7 +676,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* MODE B: NEW REGISTRATION FORM WITH TEAM NUMBER */}
+              {/* MODE B: NEW REGISTRATION FORM WITH AUTOMATIC REDIRECT */}
               {loginMode === 'register' && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
@@ -584,7 +685,7 @@ export default function App() {
                     </div>
                     <div>
                       <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Participant Registration</h2>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Saves student & team details into MongoDB Atlas</p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Registering redirects directly to Scanner section</p>
                     </div>
                   </div>
 
@@ -637,7 +738,7 @@ export default function App() {
                     </div>
 
                     <button type="submit" className="btn btn-primary" style={{ marginTop: '6px', padding: '14px', width: '100%', fontWeight: 700 }}>
-                      <Database size={18} /> Register Team & Launch Camera Scanner
+                      <Database size={18} /> Register & Go Directly to Scanner ➔
                     </button>
                   </form>
                 </div>
@@ -658,7 +759,7 @@ export default function App() {
               </div>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '4px' }}>Real Camera Scanner</h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-                Logged In Student: <strong style={{ color: '#fff' }}>{activeUser ? `${activeUser.name} (${activeUser.teamNumber})` : 'Select below'}</strong>
+                Active Student: <strong style={{ color: '#fff' }}>{activeUser ? `${activeUser.name} (${activeUser.teamNumber})` : 'Select student below'}</strong>
               </p>
 
               {/* Webcam Viewport */}
@@ -690,7 +791,7 @@ export default function App() {
               {/* User Selection & Scan Button Simulator */}
               <div style={{ textAlign: 'left', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                  Select Active Team / Student:
+                  Select Active Student / Team:
                 </label>
 
                 <select
@@ -710,14 +811,14 @@ export default function App() {
 
                 {activeUser && (
                   <button
-                    onClick={() => processScanForUser(activeUser.id || activeUser.userId)}
+                    onClick={() => initiateScanProcess(activeUser.id || activeUser.userId)}
                     disabled={activeUser.status === 'checked-out'}
                     className={`btn ${activeUser.status === 'registered' ? 'btn-success' : activeUser.status === 'checked-in' ? 'btn-danger' : 'btn-secondary'}`}
                     style={{ width: '100%', padding: '12px' }}
                   >
-                    {activeUser.status === 'registered' && <><LogIn size={18} /> Scan Common QR (1st Scan = Check-In)</>}
-                    {activeUser.status === 'checked-in' && <><LogOut size={18} /> Scan Common QR (2nd Scan = Check-Out)</>}
-                    {activeUser.status === 'checked-out' && <>✓ Attendance Completed</>}
+                    {activeUser.status === 'registered' && <><LogIn size={18} /> Scan Common QR (Prompt 1st Check-In)</>}
+                    {activeUser.status === 'checked-in' && <><LogOut size={18} /> Scan Common QR (Prompt 2nd Check-Out & Calculate Duration)</>}
+                    {activeUser.status === 'checked-out' && <>✓ Attendance Completed (In-Between Time: {activeUser.duration})</>}
                   </button>
                 )}
               </div>
@@ -742,15 +843,20 @@ export default function App() {
 
               {activeUser && (
                 <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', textAlign: 'left', fontSize: '0.8rem' }}>
-                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>LOGGED IN ROW:</div>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>ACTIVE PROFILE:</div>
                   <div style={{ fontWeight: 700, color: '#fff' }}>Team {activeUser.teamNumber}: {activeUser.name} ({activeUser.section})</div>
-                  <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
-                    <span style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
-                      Check-In: {activeUser.checkInTime || 'Pending'}
-                    </span>
-                    <span style={{ color: activeUser.checkOutTime ? '#f87171' : 'var(--text-dim)' }}>
-                      Check-Out: {activeUser.checkOutTime || 'Pending'}
-                    </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+                    <div style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
+                      <strong>Check-In:</strong> {activeUser.checkInTime || 'Pending'}
+                    </div>
+                    <div style={{ color: activeUser.checkOutTime ? '#f87171' : 'var(--text-dim)' }}>
+                      <strong>Check-Out:</strong> {activeUser.checkOutTime || 'Pending'}
+                    </div>
+                    {activeUser.duration && (
+                      <div style={{ color: '#38bdf8', fontWeight: 700, marginTop: '4px' }}>
+                        ⏱ <strong>In-Between Time:</strong> {activeUser.duration}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -832,7 +938,7 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                 <div>
                   <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>MongoDB Attendance Master Roster</h2>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Database rows with Team Number, Student Name, Check-In & Check-Out Time</p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Database rows containing Team Number, Student Name, Check-In, Check-Out & In-Between Duration</p>
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -870,13 +976,14 @@ export default function App() {
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>STATUS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-IN TIME</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-OUT TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>IN-BETWEEN TIME</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredParticipants.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                        <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
                           No database rows in MongoDB.
                         </td>
                       </tr>
@@ -920,10 +1027,13 @@ export default function App() {
                           <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
                             {p.checkOutTime || '-'}
                           </td>
+                          <td style={{ padding: '14px 16px', color: p.duration && p.duration !== 'Active' ? '#38bdf8' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 700 }}>
+                            {p.duration || (p.checkInTime && p.checkOutTime ? calculateDuration(p.checkInTime, p.checkOutTime) : '-')}
+                          </td>
                           <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                               <button
-                                onClick={() => processScanForUser(p.id || p.userId)}
+                                onClick={() => initiateScanProcess(p.id || p.userId)}
                                 className={`btn btn-sm ${p.status === 'registered' ? 'btn-success' : 'btn-danger'}`}
                               >
                                 <ScanLine size={14} /> {p.status === 'registered' ? 'Scan In' : p.status === 'checked-in' ? 'Scan Out' : 'Rescan'}

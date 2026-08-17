@@ -20,6 +20,30 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Helper function to calculate duration in between Check-In and Check-Out
+function calculateInBetweenDuration(checkInDateStr, checkOutDateStr) {
+  try {
+    const inDate = new Date(checkInDateStr);
+    const outDate = new Date(checkOutDateStr);
+    const diffMs = Math.abs(outDate - inDate);
+    if (isNaN(diffMs)) return 'N/A';
+
+    const diffSecs = Math.floor(diffMs / 1000);
+    const hours = Math.floor(diffSecs / 3600);
+    const minutes = Math.floor((diffSecs % 3600) / 60);
+    const seconds = diffSecs % 60;
+
+    const parts = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+    parts.push(`${seconds}s`);
+
+    return parts.join(' ');
+  } catch (e) {
+    return 'N/A';
+  }
+}
+
 // MongoDB Database Cluster Connection Handler
 async function connectToMongoCluster() {
   console.log('Connecting to MongoDB Atlas Cluster...');
@@ -64,7 +88,7 @@ app.get('/api/participants', async (req, res) => {
   }
 });
 
-// 2. Register a new participant with Team Number & Student Name
+// 2. Register a new participant
 app.post('/api/participants/register', async (req, res) => {
   try {
     const { teamNumber, name, email, section } = req.body;
@@ -83,7 +107,8 @@ app.post('/api/participants/register', async (req, res) => {
       section: section.trim(),
       status: 'registered',
       checkInTime: null,
-      checkOutTime: null
+      checkOutTime: null,
+      duration: null
     });
 
     await newParticipant.save();
@@ -94,7 +119,7 @@ app.post('/api/participants/register', async (req, res) => {
   }
 });
 
-// 3. Process Check-In (1st Scan) & Check-Out (2nd Scan) with interconnected ScanLog creation
+// 3. Process Check-In & Check-Out scan with explicit confirmations & duration calculation
 app.post('/api/participants/scan', async (req, res) => {
   try {
     const { targetUserId } = req.body;
@@ -111,9 +136,10 @@ app.post('/api/participants/scan', async (req, res) => {
       return res.status(404).json({ error: `Participant ID "${targetUserId}" not found in MongoDB Cluster.` });
     }
 
-    const nowFormatted = new Date().toLocaleString('en-IN', {
+    const nowObj = new Date();
+    const nowFormatted = nowObj.toLocaleString('en-IN', {
       day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: true
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
     });
 
     let scanType = 'check-in';
@@ -124,16 +150,23 @@ app.post('/api/participants/scan', async (req, res) => {
       scanType = 'check-in';
       participant.status = 'checked-in';
       participant.checkInTime = nowFormatted;
-      message = `✓ Check-In Recorded for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
+      participant.duration = 'Active';
+      message = `✓ Check-In Confirmed for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
+
     } else if (participant.status === 'checked-in') {
-      // 2nd SCAN -> CHECK-OUT
+      // 2nd SCAN -> CHECK-OUT (Calculates In-Between Duration)
       scanType = 'check-out';
       participant.status = 'checked-out';
       participant.checkOutTime = nowFormatted;
-      message = `✓✓ Check-Out Recorded for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
+
+      const durationStr = calculateInBetweenDuration(participant.checkInTime, nowFormatted);
+      participant.duration = durationStr;
+
+      message = `✓✓ Check-Out Confirmed for Team ${participant.teamNumber} (${participant.name}). Total In-Between Time: ${durationStr}`;
+
     } else {
       return res.status(400).json({
-        message: `ℹ Team ${participant.teamNumber} (${participant.name}) has already completed attendance!`,
+        message: `ℹ Team ${participant.teamNumber} (${participant.name}) has already completed attendance! Total Duration: ${participant.duration || 'Completed'}`,
         participant
       });
     }
@@ -148,7 +181,7 @@ app.post('/api/participants/scan', async (req, res) => {
 
     await scanLog.save();
 
-    // Link ScanLog ObjectId reference into Participant.scanLogs array
+    // Link ScanLog reference into Participant
     participant.scanLogs.push(scanLog._id);
     await participant.save();
 
