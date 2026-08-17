@@ -1,78 +1,162 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import QRCode from 'qrcode';
-import jsQR from 'jsqr';
+import { Html5Qrcode } from 'html5-qrcode';
+import confetti from 'canvas-confetti';
+import {
+  UserPlus,
+  Users,
+  Camera,
+  Download,
+  Printer,
+  CheckCircle2,
+  FileSpreadsheet,
+  Trash2,
+  Sparkles,
+  Clock,
+  ScanLine,
+  StopCircle,
+  LogIn,
+  LogOut,
+  Search,
+  ShieldCheck,
+  RefreshCw,
+  AlertCircle,
+  Upload
+} from 'lucide-react';
 
-const COMMON_QR_PAYLOAD = 'HACKATHON-GATE-2026';
+const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
+
+const INITIAL_PARTICIPANTS = [
+  {
+    id: 'USER-1001',
+    name: 'Aarav Sharma',
+    email: 'aarav.s@example.com',
+    section: 'CSE-A',
+    status: 'checked-in',
+    checkInTime: '17/08/2026, 09:15 AM',
+    checkOutTime: null,
+  },
+  {
+    id: 'USER-1002',
+    name: 'Ananya Patel',
+    email: 'ananya.p@example.com',
+    section: 'ECE-B',
+    status: 'checked-out',
+    checkInTime: '17/08/2026, 09:30 AM',
+    checkOutTime: '17/08/2026, 12:00 PM',
+  }
+];
 
 export default function App() {
   const [participants, setParticipants] = useState(() => {
-    const saved = localStorage.getItem('hackathon_complete_portal_v8');
-    return saved ? JSON.parse(saved) : [];
+    const saved = localStorage.getItem('hackathon_manual_excel_v9');
+    return saved ? JSON.parse(saved) : INITIAL_PARTICIPANTS;
   });
 
+  const [activeTab, setActiveTab] = useState('register'); // 'register' | 'scanner' | 'admin'
+
+  // Registration Form State
   const [formData, setFormData] = useState({ name: '', email: '', section: '' });
   const [activeUser, setActiveUser] = useState(null);
-  const [commonQrUrl, setCommonQrUrl] = useState('');
-  const [activeTab, setActiveTab] = useState('register'); // 'register' | 'scanner' | 'admin'
-  const [notice, setNotice] = useState(null);
-  const [secondsUntilExport, setSecondsUntilExport] = useState(60);
-  
-  // Camera & QR Scanner State
-  const [scanning, setScanning] = useState(false);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const animFrameIdRef = useRef(null);
-  const [cameraPermission, setCameraPermission] = useState(null);
 
-  // Auto-sync participants to LocalStorage
+  // Common Master QR Code Data URL
+  const [commonQrDataUrl, setCommonQrDataUrl] = useState('');
+
+  // Camera & Scan Notice State
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [scanNotice, setScanNotice] = useState(null);
+  const [cameraError, setCameraError] = useState(null);
+  const html5QrCodeRef = useRef(null);
+
+  // Admin Dashboard Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  // Auto-sync state to LocalStorage
   useEffect(() => {
-    localStorage.setItem('hackathon_complete_portal_v8', JSON.stringify(participants));
+    localStorage.setItem('hackathon_manual_excel_v9', JSON.stringify(participants));
   }, [participants]);
 
-  // Generate Common Master QR Code Data URL
+  // Generate Common Static Master QR Code
   useEffect(() => {
-    QRCode.toDataURL(COMMON_QR_PAYLOAD, {
-      width: 250,
-      margin: 2,
-      color: { dark: '#0f172a', light: '#ffffff' }
-    })
-      .then(url => setCommonQrUrl(url))
-      .catch(err => console.error('QR generation error:', err));
+    QRCode.toDataURL(COMMON_EVENT_QR_PAYLOAD, { width: 240, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+      .then(url => setCommonQrDataUrl(url))
+      .catch(err => console.error('Error generating common QR:', err));
   }, []);
 
-  // 1-Minute Auto Excel Export Interval
+  // Notice Auto-Dismiss after 5 seconds
   useEffect(() => {
-    const timer = setInterval(() => {
-      setSecondsUntilExport(prev => {
-        if (prev <= 1) {
-          if (participants.length > 0) exportToExcel(true);
-          return 60;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [participants]);
-
-  // Notice Auto-Dismiss after 6 seconds
-  useEffect(() => {
-    if (notice) {
-      const timer = setTimeout(() => setNotice(null), 6000);
+    if (scanNotice) {
+      const timer = setTimeout(() => setScanNotice(null), 5000);
       return () => clearTimeout(timer);
     }
-  }, [notice]);
+  }, [scanNotice]);
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+  // Cleanup camera on unmount or tab change
+  useEffect(() => {
+    return () => {
+      stopCameraScanner();
+    };
+  }, [activeTab]);
+
+  // Audio Beep Effect
+  const playBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.15);
+    } catch (e) {}
   };
 
-  // 1 & 2. Register Participant -> Automatically Launch Scanner View
-  const handleRegisterAndLaunchScanner = (e) => {
+  // Manual Export to Excel (NO AUTOMATIC EXPORT DOWNLOADS)
+  const exportToExcelManual = () => {
+    if (participants.length === 0) {
+      alert('No participant records to export.');
+      return;
+    }
+
+    const exportData = participants.map((p, idx) => ({
+      'S.No': idx + 1,
+      'User ID': p.id,
+      'Full Name': p.name,
+      'Email Address': p.email,
+      'Class/Section': p.section,
+      'Status': p.status.toUpperCase(),
+      'Check-In Time': p.checkInTime || 'Pending',
+      'Check-Out Time': p.checkOutTime || 'Pending',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Roster');
+
+    worksheet['!cols'] = [
+      { wch: 6 },
+      { wch: 15 },
+      { wch: 22 },
+      { wch: 26 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 22 },
+      { wch: 22 },
+    ];
+
+    XLSX.writeFile(workbook, `Hackathon_Attendance_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  // 1 & 2. Details Entry -> Switch to Scanner Terminal
+  const handleRegisterUser = (e) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
-      setNotice({ type: 'error', msg: '❌ Please fill out all details.' });
+      alert('Please fill out all details.');
       return;
     }
 
@@ -90,789 +174,638 @@ export default function App() {
     setParticipants(prev => [newUser, ...prev]);
     setActiveUser(newUser);
     setFormData({ name: '', email: '', section: '' });
+    
     setActiveTab('scanner');
-    setNotice({
-      type: 'success',
-      msg: `✓ ${newUser.name} registered! Point camera or click Scan to record Check-In.`
+    setScanNotice({
+      type: 'info',
+      title: `Registered: ${newUser.name}`,
+      message: `Scanner terminal ready. Scan the common QR code to Check-In.`
     });
+
+    confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
   };
 
-  // Start Camera Stream
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+  // Core Scan Transition Logic (1st scan = Check-In, 2nd scan = Check-Out)
+  const processScanForUser = (targetUserId) => {
+    const userToUpdate = participants.find(p => p.id === targetUserId) || activeUser;
+    if (!userToUpdate) {
+      setScanNotice({
+        type: 'error',
+        title: 'No User Selected',
+        message: 'Please register or select a user from the dropdown first.'
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setScanning(true);
-        setCameraPermission('granted');
-      }
-    } catch (error) {
-      console.error('Camera error:', error);
-      setCameraPermission('denied');
-      setNotice({ type: 'error', msg: '❌ Camera access denied. Use the Scan Button below or grant camera permissions.' });
+      return;
     }
-  };
-
-  // Stop Camera Stream
-  const stopCamera = () => {
-    if (animFrameIdRef.current) {
-      cancelAnimationFrame(animFrameIdRef.current);
-    }
-    if (videoRef.current && videoRef.current.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setScanning(false);
-  };
-
-  // Frame Loop for Camera Scanner
-  useEffect(() => {
-    if (!scanning) return;
-
-    let isScanningFrame = true;
-
-    const scanFrame = () => {
-      if (!isScanningFrame || !videoRef.current || !canvasRef.current) return;
-
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        try {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-          if (code) {
-            if (code.data === COMMON_QR_PAYLOAD || code.data.includes('HACKATHON')) {
-              if (!activeUser) {
-                setNotice({ type: 'error', msg: '❌ Please register user details first!' });
-              } else {
-                processCheckInOut(activeUser.id);
-              }
-              stopCamera();
-              return;
-            }
-          }
-        } catch (error) {
-          // Ignore frame decode error
-        }
-      }
-
-      animFrameIdRef.current = requestAnimationFrame(scanFrame);
-    };
-
-    animFrameIdRef.current = requestAnimationFrame(scanFrame);
-
-    return () => {
-      isScanningFrame = false;
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-    };
-  }, [scanning, activeUser]);
-
-  // Process Check-In (1st Scan) & Check-Out (2nd Scan)
-  const processCheckInOut = (userId) => {
-    const userToUpdate = participants.find(p => p.id === userId) || activeUser;
-    if (!userToUpdate) return;
 
     const nowFormatted = new Date().toLocaleString('en-IN', {
       day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+      hour: '2-digit', minute: '2-digit', hour12: true
     });
 
-    let scanMsg = '';
-    let updatedUser = null;
+    playBeep();
 
-    const updatedParticipants = participants.map(p => {
-      if (p.id === userToUpdate.id) {
-        if (p.status === 'registered') {
-          // 1st Scan -> Check In
-          scanMsg = `✓ 1st Scan: Check-In Recorded for ${p.name} at ${nowFormatted}`;
-          updatedUser = { ...p, status: 'checked-in', checkInTime: nowFormatted };
-          return updatedUser;
-        } else if (p.status === 'checked-in') {
-          // 2nd Scan -> Check Out
-          scanMsg = `✓✓ 2nd Scan: Check-Out Recorded for ${p.name} at ${nowFormatted}`;
-          updatedUser = { ...p, status: 'checked-out', checkOutTime: nowFormatted };
-          return updatedUser;
-        } else {
-          scanMsg = `ℹ ${p.name} has already completed attendance!`;
-          return p;
-        }
-      }
-      return p;
-    });
+    if (userToUpdate.status === 'registered') {
+      // 1st SCAN -> CHECK-IN
+      const updated = {
+        ...userToUpdate,
+        status: 'checked-in',
+        checkInTime: nowFormatted,
+      };
 
-    setParticipants(updatedParticipants);
-    if (updatedUser) setActiveUser(updatedUser);
-    setNotice({ type: 'success', msg: scanMsg });
-  };
+      setParticipants(prev => prev.map(p => p.id === userToUpdate.id ? updated : p));
+      setActiveUser(updated);
 
-  // Export Roster to Excel
-  const exportToExcel = (isAuto = false) => {
-    if (participants.length === 0) return;
+      setScanNotice({
+        type: 'check-in',
+        title: `✓ 1st Scan: CHECKED-IN`,
+        message: `${userToUpdate.name} (${userToUpdate.section}) checked in at ${nowFormatted}`
+      });
 
-    const data = participants.map((p, i) => ({
-      'S.No': i + 1,
-      'User ID': p.id,
-      'Name': p.name,
-      'Email': p.email,
-      'Class/Section': p.section,
-      'Status': p.status.toUpperCase(),
-      'Check-In Time': p.checkInTime || 'Pending',
-      'Check-Out Time': p.checkOutTime || 'Pending',
-    }));
+      confetti({ particleCount: 50, spread: 50, origin: { y: 0.7 } });
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Roster');
+    } else if (userToUpdate.status === 'checked-in') {
+      // 2nd SCAN -> CHECK-OUT
+      const updated = {
+        ...userToUpdate,
+        status: 'checked-out',
+        checkOutTime: nowFormatted,
+      };
 
-    worksheet['!cols'] = [
-      { wch: 6 },
-      { wch: 15 },
-      { wch: 22 },
-      { wch: 26 },
-      { wch: 16 },
-      { wch: 14 },
-      { wch: 22 },
-      { wch: 22 },
-    ];
+      setParticipants(prev => prev.map(p => p.id === userToUpdate.id ? updated : p));
+      setActiveUser(updated);
 
-    const filename = `Hackathon_Attendance_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    XLSX.writeFile(workbook, filename);
-  };
+      setScanNotice({
+        type: 'check-out',
+        title: `✓✓ 2nd Scan: CHECKED-OUT`,
+        message: `${userToUpdate.name} checked out at ${nowFormatted}`
+      });
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this record from attendance roster?')) {
-      setParticipants(prev => prev.filter(p => p.id !== id));
-      if (activeUser && activeUser.id === id) setActiveUser(null);
+    } else if (userToUpdate.status === 'checked-out') {
+      setScanNotice({
+        type: 'warning',
+        title: `ℹ Attendance Completed`,
+        message: `${userToUpdate.name} has already completed Check-In (${userToUpdate.checkInTime}) & Check-Out (${userToUpdate.checkOutTime}).`
+      });
     }
   };
 
+  // Robust Camera Scanner Startup using Html5Qrcode
+  const startCameraScanner = async () => {
+    setCameraError(null);
+    setIsCameraActive(true);
+
+    setTimeout(async () => {
+      try {
+        const container = document.getElementById('camera-stream-div');
+        if (!container) return;
+
+        // Clean up any existing instances
+        if (html5QrCodeRef.current) {
+          try {
+            await html5QrCodeRef.current.stop();
+          } catch (e) {}
+        }
+
+        const html5QrCode = new Html5Qrcode('camera-stream-div');
+        html5QrCodeRef.current = html5QrCode;
+
+        let lastScanTime = 0;
+
+        // Get available cameras
+        const devices = await Html5Qrcode.getCameras();
+        let cameraId = { facingMode: 'environment' };
+
+        if (devices && devices.length > 0) {
+          // Prefer back camera if available
+          const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear'));
+          cameraId = backCamera ? backCamera.id : devices[0].id;
+        }
+
+        await html5QrCode.start(
+          cameraId,
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          (decodedText) => {
+            const now = Date.now();
+            if (now - lastScanTime < 2500) return; // Prevent duplicate rapid scans
+            lastScanTime = now;
+
+            if (activeUser) {
+              processScanForUser(activeUser.id);
+            } else {
+              setScanNotice({
+                type: 'info',
+                title: 'QR Code Scanned',
+                message: 'Scan detected! Please select a user below to log attendance.'
+              });
+            }
+          },
+          (errorMessage) => {
+            // Ignore scan attempt frame failures
+          }
+        );
+      } catch (err) {
+        console.error('Webcam initialization failed:', err);
+        setCameraError(err.message || 'Camera access error');
+        setIsCameraActive(false);
+      }
+    }, 200);
+  };
+
+  // Stop Camera
+  const stopCameraScanner = async () => {
+    if (html5QrCodeRef.current) {
+      try {
+        if (html5QrCodeRef.current.isScanning) {
+          await html5QrCodeRef.current.stop();
+        }
+      } catch (err) {
+        console.error('Camera stop error:', err);
+      }
+      html5QrCodeRef.current = null;
+    }
+    setIsCameraActive(false);
+  };
+
+  // Scan QR Code Image File Upload (Fallback for hardware blocked cameras)
+  const handleFileUploadScan = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const html5QrCode = new Html5Qrcode('camera-stream-div-hidden');
+      const decodedText = await html5QrCode.scanFile(file, true);
+      if (activeUser) {
+        processScanForUser(activeUser.id);
+      } else {
+        alert(`QR Code Scanned: ${decodedText}`);
+      }
+    } catch (err) {
+      alert('Could not decode QR code from selected image file.');
+    }
+  };
+
+  const handleDelete = (id) => {
+    if (window.confirm('Delete this record?')) {
+      setParticipants(prev => prev.filter(p => p.id !== id));
+      if (activeUser && activeUser.id === id) {
+        setActiveUser(null);
+      }
+    }
+  };
+
+  // Stats Counters
+  const stats = {
+    total: participants.length,
+    checkedIn: participants.filter(p => p.status === 'checked-in').length,
+    checkedOut: participants.filter(p => p.status === 'checked-out').length,
+    registered: participants.filter(p => p.status === 'registered').length,
+  };
+
+  // Filtered Roster for Admin
+  const filteredParticipants = participants.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          p.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          p.section.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
   return (
-    <div style={styles.container}>
-      {/* Header Banner */}
-      <header style={styles.header}>
-        <div style={styles.headerContent}>
-          <h1 style={styles.title}>🚀 Hackathon Attendance Portal</h1>
-          <p style={styles.subtitle}>Register → Scan Common QR (1st Check-In / 2nd Check-Out) → Auto Excel Sync</p>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#090d16', color: '#f8fafc' }}>
+      <div id="camera-stream-div-hidden" style={{ display: 'none' }}></div>
+
+      {/* Top Navbar */}
+      <header className="glass-panel" style={{ borderRadius: 0, borderTop: 0, borderLeft: 0, borderRight: 0, padding: '16px 32px', position: 'sticky', top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)' }}>
+              <Camera style={{ width: '24px', height: '24px', color: '#fff' }} />
+            </div>
+            <div>
+              <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                HACKPORTAL Live Gate
+              </h1>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Details Entry ➔ Live Camera Scanner ➔ Manual Excel Export</p>
+            </div>
+          </div>
+
+          {/* Nav Tabs */}
+          <nav style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+            <button
+              onClick={() => setActiveTab('register')}
+              className={`btn ${activeTab === 'register' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            >
+              <UserPlus size={16} /> 1. Enter Details
+            </button>
+            <button
+              onClick={() => setActiveTab('scanner')}
+              className={`btn ${activeTab === 'scanner' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            >
+              <Camera size={16} /> 2. Camera Scanner
+            </button>
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`btn ${activeTab === 'admin' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            >
+              <ShieldCheck size={16} /> 3. Admin View
+            </button>
+          </nav>
         </div>
       </header>
 
-      {/* Navigation Bar */}
-      <div style={styles.navBar}>
-        <button
-          onClick={() => { setActiveTab('register'); stopCamera(); }}
-          style={{
-            ...styles.navBtn,
-            backgroundColor: activeTab === 'register' ? '#3b82f6' : '#1e293b'
-          }}
-        >
-          1. Register Participant
-        </button>
-        <button
-          onClick={() => setActiveTab('scanner')}
-          style={{
-            ...styles.navBtn,
-            backgroundColor: activeTab === 'scanner' ? '#3b82f6' : '#1e293b'
-          }}
-        >
-          2. Scan & Track
-        </button>
-        <button
-          onClick={() => { setActiveTab('admin'); stopCamera(); }}
-          style={{
-            ...styles.navBtn,
-            backgroundColor: activeTab === 'admin' ? '#3b82f6' : '#1e293b'
-          }}
-        >
-          3. Admin Dashboard ({participants.length})
-        </button>
-      </div>
+      {/* Main Container */}
+      <main style={{ flex: 1, maxWidth: '1280px', width: '100%', margin: '0 auto', padding: '32px 20px' }}>
 
-      {/* Main Content Area */}
-      <main style={styles.mainContent}>
-        {notice && (
-          <div style={{
-            ...styles.noticeBox,
-            backgroundColor: notice.type === 'error' ? 'rgba(239, 68, 68, 0.15)' :
-                           notice.type === 'success' ? 'rgba(16, 185, 129, 0.15)' :
-                           'rgba(59, 130, 246, 0.15)',
-            borderColor: notice.type === 'error' ? 'rgba(239, 68, 68, 0.3)' :
-                        notice.type === 'success' ? 'rgba(16, 185, 129, 0.3)' :
-                        'rgba(59, 130, 246, 0.3)',
-            color: notice.type === 'error' ? '#f87171' :
-                  notice.type === 'success' ? '#34d399' : '#60a5fa'
+        {/* Global Scan Banner */}
+        {scanNotice && (
+          <div className="animate-fade-in" style={{
+            padding: '16px 20px',
+            borderRadius: '14px',
+            marginBottom: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px',
+            background: scanNotice.type === 'check-in' ? 'rgba(16, 185, 129, 0.18)' :
+                        scanNotice.type === 'check-out' ? 'rgba(244, 63, 94, 0.18)' :
+                        scanNotice.type === 'error' ? 'rgba(244, 63, 94, 0.18)' : 'rgba(99, 102, 241, 0.18)',
+            border: `1px solid ${scanNotice.type === 'check-in' ? 'rgba(16, 185, 129, 0.4)' :
+                                 scanNotice.type === 'check-out' ? 'rgba(244, 63, 94, 0.4)' : 'rgba(99, 102, 241, 0.4)'}`,
+            color: scanNotice.type === 'check-in' ? '#10b981' :
+                   scanNotice.type === 'check-out' ? '#f43f5e' : '#818cf8'
           }}>
-            {notice.msg}
+            <CheckCircle2 size={24} style={{ flexShrink: 0 }} />
+            <div>
+              <h4 style={{ fontWeight: 800, fontSize: '0.95rem' }}>{scanNotice.title}</h4>
+              <p style={{ fontSize: '0.85rem', opacity: 0.9, marginTop: '2px' }}>{scanNotice.message}</p>
+            </div>
           </div>
         )}
 
-        {/* 1. Register Participant */}
+        {/* TAB 1: DETAILS ENTRY */}
         {activeTab === 'register' && (
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>Step 1: Register Participant</h2>
-            <form onSubmit={handleRegisterAndLaunchScanner} style={styles.form}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Full Name *</label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  placeholder="Enter full name"
-                  style={styles.input}
-                  required
-                />
+          <div className="animate-fade-in" style={{ maxWidth: '600px', margin: '0 auto' }}>
+            <div className="glass-panel" style={{ padding: '36px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <div style={{ padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '10px', color: 'var(--primary)' }}>
+                  <UserPlus size={24} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Enter User Details</h2>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Submit details to immediately launch the live camera scanner</p>
+                </div>
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Email Address *</label>
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="your.email@domain.com"
-                  style={styles.input}
-                  required
-                />
-              </div>
+              <form onSubmit={handleRegisterUser} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter full name"
+                    value={formData.name}
+                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Class / Section *</label>
-                <input
-                  type="text"
-                  name="section"
-                  value={formData.section}
-                  onChange={handleInputChange}
-                  placeholder="e.g., CSE-A, ECE-B"
-                  style={styles.input}
-                  required
-                />
-              </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="your.email@domain.com"
+                    value={formData.email}
+                    onChange={e => setFormData({ ...formData, email: e.target.value })}
+                  />
+                </div>
 
-              <button type="submit" style={styles.submitButton}>
-                ✓ Register & Go to Scanner Terminal
-              </button>
-            </form>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Class / Section *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. CSE-A, ECE-B"
+                    value={formData.section}
+                    onChange={e => setFormData({ ...formData, section: e.target.value })}
+                  />
+                </div>
+
+                <button type="submit" className="btn btn-primary" style={{ marginTop: '10px', padding: '14px', width: '100%', fontWeight: 700 }}>
+                  <Camera size={18} /> Submit Details & Launch Camera Scanner
+                </button>
+              </form>
+            </div>
           </div>
         )}
 
-        {/* 2. Scanner & Common QR Code View */}
+        {/* TAB 2: LIVE CAMERA SCANNER & COMMON QR CODE */}
         {activeTab === 'scanner' && (
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>Step 2: Scan QR Code for Attendance</h2>
-
-            {activeUser ? (
-              <div style={styles.activeUserBox}>
-                <p style={styles.activeUserText}>
-                  📍 Selected User: <strong style={{ color: '#38bdf8' }}>{activeUser.name}</strong> ({activeUser.section})
-                </p>
-                <p style={styles.statusText}>
-                  Current Status:{' '}
-                  <span style={{
-                    ...styles.statusBadge,
-                    backgroundColor: activeUser.status === 'registered' ? 'rgba(245, 158, 11, 0.2)' :
-                                    activeUser.status === 'checked-in' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(244, 63, 94, 0.2)',
-                    color: activeUser.status === 'registered' ? '#f59e0b' :
-                           activeUser.status === 'checked-in' ? '#10b981' : '#f43f5e'
-                  }}>
-                    {activeUser.status === 'registered' && '⏳ Registered (Ready for 1st Scan)'}
-                    {activeUser.status === 'checked-in' && '✓ CHECKED-IN (Ready for 2nd Scan)'}
-                    {activeUser.status === 'checked-out' && '✓✓ CHECKED-OUT (Completed)'}
-                  </span>
-                </p>
+          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '32px', maxWidth: '1100px', margin: '0 auto' }}>
+            
+            {/* Camera Scanner Container */}
+            <div className="glass-panel" style={{ padding: '32px', textAlign: 'center' }}>
+              <div style={{ display: 'inline-flex', padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '50%', color: 'var(--primary)', marginBottom: '12px' }}>
+                <Camera size={28} />
               </div>
-            ) : (
-              <div style={styles.warningBox}>
-                ⚠ Please select or register a participant below to process scanning.
-              </div>
-            )}
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '4px' }}>Real Camera Scanner</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
+                Selected User: <strong style={{ color: '#fff' }}>{activeUser ? activeUser.name : 'Select user below'}</strong>
+              </p>
 
-            {/* QR Display and Scanner Controls */}
-            <div style={styles.scannerContainer}>
-              {/* Common QR Graphic */}
-              <div style={styles.qrDisplayCard}>
-                <h3 style={styles.qrTitle}>Common Event QR Code</h3>
-                <p style={styles.qrDesc}>
-                  Single master QR for all participants<br/>
-                  <strong>1st scan</strong> = Check-In | <strong>2nd scan</strong> = Check-Out
-                </p>
-                {commonQrUrl && (
-                  <img src={commonQrUrl} alt="Common Event QR Code" style={styles.qrImage} />
-                )}
+              {/* Webcam Viewport */}
+              {!isCameraActive ? (
+                <div style={{ padding: '32px 16px', border: '2px dashed var(--border-color)', borderRadius: '16px', background: 'rgba(15, 23, 42, 0.4)', marginBottom: '20px' }}>
+                  <Camera size={44} style={{ color: 'var(--text-dim)', marginBottom: '12px' }} />
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                    Click below to open webcam and scan the Common Event QR code
+                  </p>
+                  <button onClick={startCameraScanner} className="btn btn-primary" style={{ width: '100%' }}>
+                    <Camera size={18} /> Start Camera Scanner
+                  </button>
+
+                  {cameraError && (
+                    <p style={{ color: '#f87171', fontSize: '0.78rem', marginTop: '12px' }}>
+                      ⚠ {cameraError}. Ensure webcam permissions are allowed or use the Scan Button below.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginBottom: '20px' }}>
+                  <button onClick={stopCameraScanner} className="btn btn-danger btn-sm" style={{ marginBottom: '12px' }}>
+                    <StopCircle size={14} /> Stop Camera
+                  </button>
+
+                  {/* Html5Qrcode Target Element */}
+                  <div id="camera-stream-div" style={{ width: '100%', maxWidth: '380px', margin: '0 auto', minHeight: '260px', borderRadius: '14px', border: '2px solid var(--primary)', overflow: 'hidden' }}></div>
+                </div>
+              )}
+
+              {/* User Selection & Scan Button Simulator */}
+              <div style={{ textAlign: 'left', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
+                  Select User to Process Attendance Scan:
+                </label>
+                
+                <select
+                  value={activeUser ? activeUser.id : ''}
+                  onChange={e => {
+                    const found = participants.find(p => p.id === e.target.value);
+                    if (found) setActiveUser(found);
+                  }}
+                  style={{ marginBottom: '12px' }}
+                >
+                  {participants.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.section}) - Status: {p.status.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
 
                 {activeUser && (
                   <button
-                    onClick={() => processCheckInOut(activeUser.id)}
+                    onClick={() => processScanForUser(activeUser.id)}
                     disabled={activeUser.status === 'checked-out'}
-                    style={{
-                      ...styles.actionScanBtn,
-                      backgroundColor: activeUser.status === 'registered' ? '#10b981' :
-                                       activeUser.status === 'checked-in' ? '#ef4444' : '#64748b',
-                      cursor: activeUser.status === 'checked-out' ? 'not-allowed' : 'pointer'
-                    }}
+                    className={`btn ${activeUser.status === 'registered' ? 'btn-success' : activeUser.status === 'checked-in' ? 'btn-danger' : 'btn-secondary'}`}
+                    style={{ width: '100%', padding: '12px', marginBottom: '12px' }}
                   >
-                    {activeUser.status === 'registered' && '📲 Scan Common QR (1st Scan = Check-In)'}
-                    {activeUser.status === 'checked-in' && '📲 Scan Common QR (2nd Scan = Check-Out)'}
-                    {activeUser.status === 'checked-out' && '✓ Attendance Completed'}
+                    {activeUser.status === 'registered' && <><LogIn size={18} /> Scan Common QR (1st Scan = Check-In)</>}
+                    {activeUser.status === 'checked-in' && <><LogOut size={18} /> Scan Common QR (2nd Scan = Check-Out)</>}
+                    {activeUser.status === 'checked-out' && <>✓ Attendance Completed</>}
                   </button>
                 )}
-              </div>
 
-              {/* Real Camera Stream Box */}
-              <div style={styles.cameraCard}>
-                <h3 style={styles.cameraTitle}>📷 Real Webcam Scanner</h3>
-                {scanning ? (
-                  <div>
-                    <video
-                      ref={videoRef}
-                      style={styles.videoStream}
-                      autoPlay
-                      playsInline
-                    />
-                    <canvas ref={canvasRef} style={{ display: 'none' }} />
-                    <button onClick={stopCamera} style={styles.stopButton}>
-                      Stop Camera
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    <p style={styles.cameraPrompt}>
-                      {cameraPermission === 'denied'
-                        ? '❌ Camera access denied'
-                        : 'Point webcam at the Common QR code to trigger scan'}
-                    </p>
-                    <button onClick={startCamera} style={styles.startButton}>
-                      📷 Start Device Camera
-                    </button>
-                  </div>
-                )}
+                {/* Upload QR Image Fallback */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                  <label className="btn btn-secondary btn-sm" style={{ flex: 1, cursor: 'pointer' }}>
+                    <Upload size={14} /> Scan Image File
+                    <input type="file" accept="image/*" onChange={handleFileUploadScan} style={{ display: 'none' }} />
+                  </label>
+                </div>
               </div>
             </div>
 
-            {/* Select active user dropdown */}
-            <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #334155' }}>
-              <label style={{ fontSize: '13px', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>
-                Select Active Participant to Track:
-              </label>
-              <select
-                value={activeUser ? activeUser.id : ''}
-                onChange={e => {
-                  const found = participants.find(p => p.id === e.target.value);
-                  if (found) setActiveUser(found);
-                }}
-                style={styles.input}
-              >
-                <option value="">-- Choose Registered Participant --</option>
-                {participants.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.section}) - {p.status.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+            {/* Common Static Master QR Display */}
+            <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', background: 'linear-gradient(180deg, rgba(18, 26, 43, 0.95) 0%, rgba(9, 13, 22, 0.95) 100%)' }}>
+              <div style={{ display: 'inline-flex', padding: '6px 14px', background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '16px' }}>
+                COMMON MASTER QR CODE
+              </div>
+
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>Event Gate Master QR</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
+                Shared by all attendees. <strong>1st Scan</strong> = Check-In | <strong>2nd Scan</strong> = Check-Out.
+              </p>
+
+              {commonQrDataUrl && (
+                <div style={{ background: '#fff', padding: '14px', borderRadius: '16px', display: 'inline-block', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', marginBottom: '20px' }}>
+                  <img src={commonQrDataUrl} alt="Common Master Event QR" style={{ width: '200px', height: '200px', display: 'block' }} />
+                </div>
+              )}
+
+              {activeUser && (
+                <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', textAlign: 'left', fontSize: '0.8rem' }}>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>ACTIVE USER STATUS:</div>
+                  <div style={{ fontWeight: 700, color: '#fff' }}>{activeUser.name} ({activeUser.section})</div>
+                  <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
+                    <span style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
+                      IN: {activeUser.checkInTime || 'Pending'}
+                    </span>
+                    <span style={{ color: activeUser.checkOutTime ? '#f87171' : 'var(--text-dim)' }}>
+                      OUT: {activeUser.checkOutTime || 'Pending'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
+
           </div>
         )}
 
-        {/* 3. Admin Dashboard & Auto 1-Min Excel Export */}
+        {/* TAB 3: ADMIN DASHBOARD & MANUAL EXCEL EXPORT ONLY */}
         {activeTab === 'admin' && (
-          <div style={styles.card}>
-            <div style={styles.adminHeader}>
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+            
+            {/* Top Bar with Explicit Manual Export Button Only */}
+            <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
               <div>
-                <h2 style={styles.cardTitle}>Step 3: Admin Master Dashboard</h2>
-                <p style={styles.autoExportText}>
-                  📊 Total Attendees: <strong>{participants.length}</strong> | Auto-Syncing Excel every <strong>60s</strong> (Next in {secondsUntilExport}s)
+                <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Admin Attendance Master Control</h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  View all participant records and export to Excel spreadsheet on demand
                 </p>
               </div>
-              <button onClick={() => exportToExcel(false)} style={styles.exportButton}>
-                📥 Export to Excel Now (.xlsx)
+
+              <button onClick={exportToExcelManual} className="btn btn-success" style={{ height: '42px', fontWeight: 700 }}>
+                <FileSpreadsheet size={18} /> Export to Excel (.xlsx)
               </button>
             </div>
 
-            {participants.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p>No participants registered yet. Click "1. Register Participant" to begin.</p>
+            {/* Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+              <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ padding: '12px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '12px', color: 'var(--primary)' }}>
+                  <Users size={24} />
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL USERS</p>
+                  <h3 style={{ fontSize: '1.6rem', fontWeight: 800 }}>{stats.total}</h3>
+                </div>
               </div>
-            ) : (
-              <div style={styles.tableContainer}>
-                <table style={styles.table}>
+
+              <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.15)', borderRadius: '12px', color: 'var(--accent-emerald)' }}>
+                  <LogIn size={24} />
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>CHECKED IN</p>
+                  <h3 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>{stats.checkedIn}</h3>
+                </div>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ padding: '12px', background: 'rgba(244, 63, 94, 0.15)', borderRadius: '12px', color: 'var(--accent-rose)' }}>
+                  <LogOut size={24} />
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>CHECKED OUT</p>
+                  <h3 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-rose)' }}>{stats.checkedOut}</h3>
+                </div>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ padding: '12px', background: 'rgba(245, 158, 11, 0.15)', borderRadius: '12px', color: 'var(--accent-amber)' }}>
+                  <Clock size={24} />
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>ATTENDANCE RATE</p>
+                  <h3 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-amber)' }}>
+                    {stats.total > 0 ? Math.round(((stats.checkedIn + stats.checkedOut) / stats.total) * 100) : 0}%
+                  </h3>
+                </div>
+              </div>
+            </div>
+
+            {/* Admin Table Roster */}
+            <div className="glass-panel" style={{ padding: '28px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Attendance Master Roster</h2>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Real-time attendance logs stored in application state</p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ position: 'relative', minWidth: '220px' }}>
+                    <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
+                    <input
+                      type="text"
+                      placeholder="Search ID, name, section..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '36px', height: '40px', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <select
+                    value={statusFilter}
+                    onChange={e => setStatusFilter(e.target.value)}
+                    style={{ width: 'auto', height: '40px', fontSize: '0.85rem' }}
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="registered">Registered</option>
+                    <option value="checked-in">Checked In</option>
+                    <option value="checked-out">Checked Out</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                   <thead>
-                    <tr style={styles.tableHeader}>
-                      <th style={styles.th}>User ID</th>
-                      <th style={styles.th}>Full Name</th>
-                      <th style={styles.th}>Email Address</th>
-                      <th style={styles.th}>Class / Section</th>
-                      <th style={styles.th}>Status</th>
-                      <th style={styles.th}>Check-In Time</th>
-                      <th style={styles.th}>Check-Out Time</th>
-                      <th style={styles.th}>Admin Actions</th>
+                    <tr style={{ background: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>USER ID</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>FULL NAME & EMAIL</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CLASS / SECTION</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>STATUS</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-IN TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-OUT TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {participants.map((p, idx) => (
-                      <tr key={p.id} style={idx % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd}>
-                        <td style={{ ...styles.td, fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold' }}>
-                          {p.id}
-                        </td>
-                        <td style={{ ...styles.td, fontWeight: '600' }}>{p.name}</td>
-                        <td style={styles.td}>{p.email}</td>
-                        <td style={styles.td}>{p.section}</td>
-                        <td style={styles.td}>
-                          <span style={{
-                            ...styles.statusTag,
-                            backgroundColor: p.status === 'registered' ? 'rgba(245, 158, 11, 0.2)' :
-                                            p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.2)' :
-                                            'rgba(244, 63, 94, 0.2)',
-                            color: p.status === 'registered' ? '#f59e0b' :
-                                   p.status === 'checked-in' ? '#10b981' : '#f87171'
-                          }}>
-                            {p.status === 'registered' ? '⏳ Registered' :
-                             p.status === 'checked-in' ? '✓ Checked-In' :
-                             '✓✓ Checked-Out'}
-                          </span>
-                        </td>
-                        <td style={{ ...styles.td, color: p.checkInTime ? '#34d399' : '#64748b' }}>
-                          {p.checkInTime || '-'}
-                        </td>
-                        <td style={{ ...styles.td, color: p.checkOutTime ? '#f87171' : '#64748b' }}>
-                          {p.checkOutTime || '-'}
-                        </td>
-                        <td style={styles.td}>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            {p.status !== 'checked-out' && (
-                              <button
-                                onClick={() => processCheckInOut(p.id)}
-                                style={{
-                                  ...styles.smallBtn,
-                                  backgroundColor: p.status === 'registered' ? '#10b981' : '#ef4444'
-                                }}
-                              >
-                                {p.status === 'registered' ? 'Scan In' : 'Scan Out'}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleDelete(p.id)}
-                              style={{ ...styles.smallBtn, backgroundColor: '#f43f5e' }}
-                            >
-                              Delete
-                            </button>
-                          </div>
+                    {filteredParticipants.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                          No records found.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredParticipants.map(p => (
+                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
+                            {p.id}
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{p.name}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.email}</div>
+                          </td>
+                          <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{p.section}</td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '4px 10px',
+                              borderRadius: '20px',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              background: p.status === 'registered' ? 'rgba(245, 158, 11, 0.15)' :
+                                          p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+                              color: p.status === 'registered' ? '#f59e0b' :
+                                     p.status === 'checked-in' ? '#10b981' : '#f43f5e',
+                              border: `1px solid ${p.status === 'registered' ? 'rgba(245, 158, 11, 0.3)' :
+                                                   p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`
+                            }}>
+                              {p.status === 'registered' && '⏳ Registered'}
+                              {p.status === 'checked-in' && '✓ Checked-In'}
+                              {p.status === 'checked-out' && '✓✓ Checked-Out'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 16px', color: p.checkInTime ? 'var(--accent-emerald)' : 'var(--text-dim)', fontSize: '0.8rem' }}>
+                            {p.checkInTime || '-'}
+                          </td>
+                          <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem' }}>
+                            {p.checkOutTime || '-'}
+                          </td>
+                          <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <button
+                                onClick={() => processScanForUser(p.id)}
+                                className={`btn btn-sm ${p.status === 'registered' ? 'btn-success' : 'btn-danger'}`}
+                              >
+                                <ScanLine size={14} /> {p.status === 'registered' ? 'Scan In' : p.status === 'checked-in' ? 'Scan Out' : 'Rescan'}
+                              </button>
+                              <button
+                                onClick={() => handleDelete(p.id)}
+                                className="btn btn-danger btn-sm"
+                                style={{ padding: '6px 8px' }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
-            )}
+            </div>
+
           </div>
         )}
+
       </main>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#090d16',
-    color: '#f8fafc',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  },
-  header: {
-    background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%)',
-    color: 'white',
-    padding: '30px 20px',
-    textAlign: 'center',
-  },
-  headerContent: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-  },
-  title: {
-    fontSize: '32px',
-    fontWeight: '800',
-    margin: '0 0 6px 0',
-  },
-  subtitle: {
-    fontSize: '14px',
-    color: '#a5b4fc',
-    margin: 0,
-  },
-  navBar: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '12px',
-    padding: '16px',
-    backgroundColor: '#0f172a',
-    borderBottom: '1px solid #334155',
-    flexWrap: 'wrap',
-  },
-  navBtn: {
-    padding: '10px 20px',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    cursor: 'pointer',
-    fontSize: '14px',
-  },
-  mainContent: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    padding: '32px 20px',
-  },
-  noticeBox: {
-    padding: '16px 20px',
-    borderRadius: '10px',
-    border: '1px solid',
-    fontWeight: 'bold',
-    marginBottom: '24px',
-  },
-  card: {
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-    borderRadius: '16px',
-    padding: '32px',
-    marginBottom: '28px',
-    border: '1px solid rgba(255, 255, 255, 0.08)',
-  },
-  cardTitle: {
-    fontSize: '24px',
-    fontWeight: '700',
-    color: '#f8fafc',
-    margin: '0 0 20px 0',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '18px',
-  },
-  formGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  label: {
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#94a3b8',
-  },
-  input: {
-    padding: '14px 16px',
-    backgroundColor: '#090d16',
-    border: '1px solid #334155',
-    borderRadius: '10px',
-    fontSize: '14px',
-    color: '#fff',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-  },
-  submitButton: {
-    padding: '14px 24px',
-    background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '10px',
-    fontSize: '16px',
-    fontWeight: '700',
-    cursor: 'pointer',
-  },
-  activeUserBox: {
-    backgroundColor: '#090d16',
-    padding: '16px 20px',
-    borderRadius: '10px',
-    marginBottom: '24px',
-    border: '1px solid #334155',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: '12px',
-  },
-  activeUserText: {
-    fontSize: '15px',
-    margin: 0,
-  },
-  statusText: {
-    fontSize: '14px',
-    margin: 0,
-  },
-  statusBadge: {
-    padding: '4px 12px',
-    borderRadius: '12px',
-    fontSize: '12px',
-    fontWeight: '700',
-  },
-  warningBox: {
-    padding: '14px 18px',
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    border: '1px solid rgba(245, 158, 11, 0.3)',
-    color: '#fbbf24',
-    borderRadius: '10px',
-    fontWeight: '600',
-    marginBottom: '24px',
-  },
-  scannerContainer: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-    gap: '24px',
-  },
-  qrDisplayCard: {
-    backgroundColor: '#090d16',
-    borderRadius: '12px',
-    padding: '24px',
-    textAlign: 'center',
-    border: '1px solid #334155',
-  },
-  qrTitle: {
-    fontSize: '18px',
-    fontWeight: '700',
-    margin: '0 0 8px 0',
-  },
-  qrDesc: {
-    fontSize: '13px',
-    color: '#94a3b8',
-    marginBottom: '16px',
-  },
-  qrImage: {
-    width: '200px',
-    height: '200px',
-    borderRadius: '12px',
-    backgroundColor: '#fff',
-    padding: '10px',
-    marginBottom: '16px',
-  },
-  actionScanBtn: {
-    width: '100%',
-    padding: '12px',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    fontSize: '14px',
-  },
-  cameraCard: {
-    backgroundColor: '#090d16',
-    borderRadius: '12px',
-    padding: '24px',
-    textAlign: 'center',
-    border: '1px solid #334155',
-  },
-  cameraTitle: {
-    fontSize: '18px',
-    fontWeight: '700',
-    margin: '0 0 16px 0',
-  },
-  cameraPrompt: {
-    fontSize: '14px',
-    color: '#94a3b8',
-    marginBottom: '16px',
-  },
-  startButton: {
-    padding: '12px 24px',
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    fontSize: '14px',
-    cursor: 'pointer',
-  },
-  stopButton: {
-    padding: '10px 20px',
-    backgroundColor: '#ef4444',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    fontSize: '13px',
-    cursor: 'pointer',
-    marginTop: '12px',
-  },
-  videoStream: {
-    width: '100%',
-    maxWidth: '360px',
-    borderRadius: '12px',
-    border: '2px solid #3b82f6',
-  },
-  adminHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '24px',
-    flexWrap: 'wrap',
-    gap: '16px',
-  },
-  autoExportText: {
-    fontSize: '13px',
-    color: '#94a3b8',
-    margin: '4px 0 0 0',
-  },
-  exportButton: {
-    padding: '12px 24px',
-    backgroundColor: '#10b981',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    fontSize: '14px',
-    cursor: 'pointer',
-  },
-  emptyState: {
-    padding: '40px',
-    textAlign: 'center',
-    color: '#64748b',
-  },
-  tableContainer: {
-    overflowX: 'auto',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: '14px',
-  },
-  tableHeader: {
-    backgroundColor: '#090d16',
-    borderBottom: '2px solid #334155',
-  },
-  th: {
-    padding: '14px 16px',
-    textAlign: 'left',
-    fontWeight: '600',
-    color: '#94a3b8',
-  },
-  td: {
-    padding: '14px 16px',
-    borderBottom: '1px solid #1e293b',
-    color: '#cbd5e1',
-  },
-  tableRowEven: {
-    backgroundColor: 'rgba(9, 13, 22, 0.5)',
-  },
-  tableRowOdd: {
-    backgroundColor: 'transparent',
-  },
-  statusTag: {
-    padding: '4px 10px',
-    borderRadius: '12px',
-    fontSize: '12px',
-    fontWeight: '700',
-  },
-  smallBtn: {
-    padding: '6px 12px',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '12px',
-    fontWeight: '700',
-    cursor: 'pointer',
-  }
-};
