@@ -187,38 +187,69 @@ export default function App() {
     XLSX.writeFile(workbook, `MongoDB_Hackathon_Attendance_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
-  // Login via Existing Team Number
-  const handleExistingTeamLogin = (e) => {
+  // Login via Existing Team Number (Redirects Returning Users Directly to Scanner)
+  const handleExistingTeamLogin = async (e) => {
     e.preventDefault();
     if (!loginTeamInput.trim()) {
       alert('Please enter a Team Number.');
       return;
     }
 
-    const searchStr = loginTeamInput.trim().toLowerCase();
-    const foundUser = participants.find(p => 
-      (p.teamNumber && p.teamNumber.toLowerCase() === searchStr) ||
-      (p.id && p.id.toLowerCase() === searchStr) ||
-      (p.email && p.email.toLowerCase() === searchStr)
-    );
+    const searchStr = loginTeamInput.trim().toUpperCase();
 
-    if (foundUser) {
-      setActiveUser(foundUser);
-      setActiveTab('scanner');
-      setScanNotice({
-        type: 'success',
-        title: `Welcome Team ${foundUser.teamNumber}!`,
-        message: `Logged in as ${foundUser.name}. Scanner terminal active.`
+    try {
+      const res = await fetch(`${API_BASE_URL}/participants/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamNumber: searchStr })
       });
-      confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
-    } else {
-      alert(`Team Number "${loginTeamInput}" not found in database. Creating new registration for Team ${loginTeamInput.toUpperCase()}...`);
-      setFormData(prev => ({ ...prev, teamNumber: loginTeamInput.toUpperCase() }));
-      setLoginMode('register');
+
+      if (res.ok) {
+        const foundUser = await res.json();
+        const formattedUser = { ...foundUser, id: foundUser.userId, teamNumber: foundUser.teamNumber || searchStr };
+        
+        setActiveUser(formattedUser);
+        setActiveTab('scanner'); // DIRECT REDIRECT TO SCANNER SECTION
+        
+        setScanNotice({
+          type: 'success',
+          title: `Welcome back Team ${formattedUser.teamNumber}!`,
+          message: `Logged in as ${formattedUser.name} (${formattedUser.section}). Direct redirect to Scanner.`
+        });
+
+        fetchParticipantsFromMongo();
+        confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
+      } else {
+        // Fallback local search
+        const localMatch = participants.find(p => p.teamNumber && p.teamNumber.toUpperCase() === searchStr);
+        if (localMatch) {
+          setActiveUser(localMatch);
+          setActiveTab('scanner');
+          setScanNotice({
+            type: 'success',
+            title: `Welcome back Team ${localMatch.teamNumber}!`,
+            message: `Logged in as ${localMatch.name}. Scanner terminal active.`
+          });
+        } else {
+          alert(`Team Number "${searchStr}" not found in MongoDB Atlas. Redirecting to New Registration for Team ${searchStr}...`);
+          setFormData(prev => ({ ...prev, teamNumber: searchStr }));
+          setLoginMode('register');
+        }
+      }
+    } catch (err) {
+      console.warn('Login fetch error, local fallback:', err);
+      const localMatch = participants.find(p => p.teamNumber && p.teamNumber.toUpperCase() === searchStr);
+      if (localMatch) {
+        setActiveUser(localMatch);
+        setActiveTab('scanner');
+      } else {
+        setFormData(prev => ({ ...prev, teamNumber: searchStr }));
+        setLoginMode('register');
+      }
     }
   };
 
-  // Register New Student & Team Row -> SAVES DIRECTLY TO MONGODB ATLAS & REDIRECTS TO SCANNER
+  // First Time Registration -> SAVES TO MONGODB ATLAS & REDIRECTS DIRECTLY TO SCANNER
   const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.teamNumber.trim() || !formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
@@ -229,7 +260,7 @@ export default function App() {
     const formattedTeamNumber = formData.teamNumber.trim().toUpperCase();
 
     try {
-      console.log('Sending registration request to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
+      console.log('Sending first-time registration to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
       const res = await fetch(`${API_BASE_URL}/participants/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -243,18 +274,18 @@ export default function App() {
 
       if (res.ok) {
         const newUser = await res.json();
-        console.log('✓ Successfully registered and saved document in MongoDB Atlas:', newUser);
+        console.log('✓ First-Time User Saved to MongoDB Atlas:', newUser);
         const formattedUser = { ...newUser, id: newUser.userId, teamNumber: newUser.teamNumber || formattedTeamNumber, sessionCount: 0 };
         
         setParticipants(prev => [formattedUser, ...prev]);
         setActiveUser(formattedUser);
         setFormData({ teamNumber: '', name: '', email: '', section: '' });
         
-        setActiveTab('scanner');
+        setActiveTab('scanner'); // DIRECT REDIRECT TO SCANNER SECTION
         setScanNotice({
           type: 'info',
-          title: `✓ Saved Document in MongoDB Atlas!`,
-          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) inserted into MongoDB Atlas database (ID: ${formattedUser.userId}). Ready to scan!`
+          title: `✓ Saved Row to MongoDB Atlas!`,
+          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) created in MongoDB Atlas (ID: ${formattedUser.userId}). Ready to scan!`
         });
 
         await fetchParticipantsFromMongo();
@@ -265,7 +296,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Registration fetch error:', err);
-      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure express server is running on port 5000.`);
+      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure server is running.`);
     }
   };
 
@@ -614,7 +645,7 @@ export default function App() {
                     </div>
                     <div>
                       <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Team Portal Login</h2>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Enter your Team Number to launch scanner</p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Enter your Team Number to launch scanner directly</p>
                     </div>
                   </div>
 
@@ -634,7 +665,7 @@ export default function App() {
                     </div>
 
                     <button type="submit" className="btn btn-primary" style={{ padding: '14px', width: '100%', fontWeight: 700 }}>
-                      <LogIn size={18} /> Login & Launch Scanner
+                      <LogIn size={18} /> Login & Redirect to Scanner ➔
                     </button>
                   </form>
                 </div>

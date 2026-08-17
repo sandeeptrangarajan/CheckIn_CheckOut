@@ -15,7 +15,7 @@ const MONGODB_REPLICA_URI = process.env.MONGODB_REPLICA_URI;
 // Middleware
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
@@ -78,7 +78,34 @@ app.get('/api/participants', async (req, res) => {
   }
 });
 
-// 2. Register a new participant
+// 2. Team Login Endpoint (Redirects existing users)
+app.post('/api/participants/login', async (req, res) => {
+  try {
+    const { teamNumber } = req.body;
+    if (!teamNumber || !teamNumber.trim()) {
+      return res.status(400).json({ error: 'Team Number is required' });
+    }
+
+    const searchStr = teamNumber.trim().toUpperCase();
+    const participant = await Participant.findOne({
+      $or: [
+        { teamNumber: searchStr },
+        { userId: searchStr }
+      ]
+    }).populate('scanLogs');
+
+    if (!participant) {
+      return res.status(404).json({ error: `Team Number "${teamNumber}" not found in MongoDB Atlas.` });
+    }
+
+    console.log(`✓ Returning User Logged In: Team ${participant.teamNumber} (${participant.name})`);
+    res.json(participant);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Register a new participant (First time login / registration)
 app.post('/api/participants/register', async (req, res) => {
   try {
     const { teamNumber, name, email, section } = req.body;
@@ -104,14 +131,14 @@ app.post('/api/participants/register', async (req, res) => {
     });
 
     await newParticipant.save();
-    console.log(`✓ Saved Row to MongoDB Atlas: Team ${formattedTeamNumber} - ${name} (${userId})`);
+    console.log(`✓ First-Time User Saved to MongoDB Atlas: Team ${formattedTeamNumber} - ${name} (${userId})`);
     res.status(201).json(newParticipant);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Process Repeatable Multi-Cycle Check-In / Check-Out Scans
+// 4. Process Repeatable Multi-Cycle Check-In / Check-Out Scans
 app.post('/api/participants/scan', async (req, res) => {
   try {
     const { targetUserId } = req.body;
@@ -142,7 +169,7 @@ app.post('/api/participants/scan', async (req, res) => {
       scanType = 'check-in';
       participant.status = 'checked-in';
       participant.checkInTime = nowFormatted;
-      participant.checkOutTime = null; // reset checkOutTime for new session
+      participant.checkOutTime = null;
       participant.sessionCount = (participant.sessionCount || 0) + 1;
       
       message = `✓ Check-In Confirmed (Session #${participant.sessionCount}) for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
@@ -154,7 +181,7 @@ app.post('/api/participants/scan', async (req, res) => {
       participant.checkOutTime = nowFormatted;
 
       // Calculate elapsed milliseconds for this session
-      let sessionMs = 60000; // default 1 min fallback if date parsing differs
+      let sessionMs = 60000;
       try {
         const inDate = new Date(participant.checkInTime);
         const outDate = new Date(nowFormatted);
@@ -197,7 +224,7 @@ app.post('/api/participants/scan', async (req, res) => {
   }
 });
 
-// 4. Delete participant
+// 5. Delete participant
 app.delete('/api/participants/:id', async (req, res) => {
   try {
     const { id } = req.params;
