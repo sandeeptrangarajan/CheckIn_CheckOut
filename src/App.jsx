@@ -34,7 +34,7 @@ const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
 
 export default function App() {
   const [participants, setParticipants] = useState([]);
-  const [dbStatus, setDbStatus] = useState('connecting');
+  const [dbStatus, setDbStatus] = useState('connecting'); // 'connecting' | 'connected' | 'offline'
 
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'scanner' | 'admin'
   const [loginMode, setLoginMode] = useState('register'); // 'register' | 'existing_login'
@@ -45,7 +45,7 @@ export default function App() {
   const [activeUser, setActiveUser] = useState(null);
 
   // Confirmation Modal State
-  const [confirmModal, setConfirmModal] = useState(null); // { user, actionType: 'check-in' | 'check-out' | 're-check-in' }
+  const [confirmModal, setConfirmModal] = useState(null);
 
   // Common Master QR Code Data URL
   const [commonQrDataUrl, setCommonQrDataUrl] = useState('');
@@ -60,19 +60,26 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Fetch all interconnected participant database rows from MongoDB API on mount
+  // Fetch all interconnected participant database rows directly from MongoDB API
   const fetchParticipantsFromMongo = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/participants`);
       if (res.ok) {
         const data = await res.json();
-        setParticipants(data.map(p => ({
+        const formatted = data.map(p => ({
           ...p,
           id: p.userId || p._id,
           teamNumber: p.teamNumber || 'TEAM-101',
           sessionCount: p.sessionCount || 0
-        })));
+        }));
+        setParticipants(formatted);
         setDbStatus('connected');
+
+        // Update activeUser if selected
+        if (activeUser) {
+          const updatedActive = formatted.find(p => p.id === activeUser.id || p.userId === activeUser.id);
+          if (updatedActive) setActiveUser(updatedActive);
+        }
       } else {
         throw new Error('API request failed');
       }
@@ -84,8 +91,13 @@ export default function App() {
     }
   };
 
+  // Poll MongoDB Atlas API every 4 seconds for real-time live synchronization
   useEffect(() => {
     fetchParticipantsFromMongo();
+    const interval = setInterval(() => {
+      fetchParticipantsFromMongo();
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   // Sync state fallback to LocalStorage
@@ -133,7 +145,7 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Manual Export to Excel (Includes Sessions & Cumulative In-Between Time)
+  // Manual Export to Excel
   const exportToExcelManual = () => {
     if (participants.length === 0) {
       alert('No participant database rows to export.');
@@ -172,7 +184,7 @@ export default function App() {
       { wch: 30 },
     ];
 
-    XLSX.writeFile(workbook, `MongoDB_Hackathon_MultiScan_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(workbook, `MongoDB_Hackathon_Attendance_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
   // Login via Existing Team Number
@@ -239,10 +251,11 @@ export default function App() {
         setActiveTab('scanner');
         setScanNotice({
           type: 'info',
-          title: `✓ Registration Saved to MongoDB!`,
-          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) created. Ready to scan QR code!`
+          title: `✓ Saved Row to MongoDB Atlas!`,
+          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) created in MongoDB Atlas. Ready to scan QR code!`
         });
 
+        fetchParticipantsFromMongo();
         confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
       } else {
         throw new Error('Registration failed');
@@ -288,12 +301,11 @@ export default function App() {
     } else if (userToUpdate.status === 'checked-in') {
       setConfirmModal({ user: userToUpdate, actionType: 'check-out' });
     } else if (userToUpdate.status === 'checked-out') {
-      // REPEAT SCAN CYCLE FOR ANOTHER SESSION!
       setConfirmModal({ user: userToUpdate, actionType: 're-check-in' });
     }
   };
 
-  // Step B: Execute Confirmed Scan (Supports Repeatable Cycles)
+  // Step B: Execute Confirmed Scan (Updates MongoDB Atlas directly)
   const executeConfirmedScan = async () => {
     if (!confirmModal || !confirmModal.user) return;
     const userToUpdate = confirmModal.user;
@@ -322,9 +334,11 @@ export default function App() {
           type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
           title: result.message,
           message: updatedUser.status === 'checked-out' 
-            ? `Cumulative in-between time updated in MongoDB Atlas + Excel: ${updatedUser.duration}` 
-            : `Session #${updatedUser.sessionCount} check-in recorded in MongoDB Atlas.`
+            ? `Cumulative duration saved in MongoDB Atlas database: ${updatedUser.duration}` 
+            : `Check-in recorded in MongoDB Atlas database.`
         });
+
+        fetchParticipantsFromMongo();
 
         if (updatedUser.status === 'checked-in') {
           confetti({ particleCount: 50, spread: 50, origin: { y: 0.7 } });
@@ -422,7 +436,7 @@ export default function App() {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Delete this database row from MongoDB?')) {
+    if (window.confirm('Delete this database row from MongoDB Atlas?')) {
       try {
         await fetch(`${API_BASE_URL}/participants/${id}`, { method: 'DELETE' });
       } catch (e) {}
@@ -431,6 +445,7 @@ export default function App() {
       if (activeUser && (activeUser.id === id || activeUser.userId === id)) {
         setActiveUser(null);
       }
+      fetchParticipantsFromMongo();
     }
   };
 
@@ -469,7 +484,7 @@ export default function App() {
             </h3>
             
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-              {confirmModal.actionType === 'check-out' && 'Calculates in-between time & updates cumulative total automatically.'}
+              {confirmModal.actionType === 'check-out' && 'Calculates in-between duration & updates MongoDB Atlas automatically.'}
               {confirmModal.actionType === 're-check-in' && 'Starts a new attendance session cycle for this team.'}
               {confirmModal.actionType === 'check-in' && 'Records session Check-In timestamp in MongoDB Atlas.'}
               <br/>
@@ -503,12 +518,12 @@ export default function App() {
         <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)' }}>
-              <KeyRound style={{ width: '24px', height: '24px', color: '#fff' }} />
+              <Database style={{ width: '24px', height: '24px', color: '#fff' }} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                  HACKPORTAL Gate System
+                  HACKPORTAL MongoDB System
                 </h1>
                 <span style={{
                   padding: '3px 10px',
@@ -519,37 +534,43 @@ export default function App() {
                   color: dbStatus === 'connected' ? '#10b981' : '#f59e0b',
                   border: `1px solid ${dbStatus === 'connected' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`
                 }}>
-                  {dbStatus === 'connected' ? 'MongoDB Atlas Connected' : 'Local Fallback'}
+                  {dbStatus === 'connected' ? '✓ MongoDB Atlas Connected' : 'Local Fallback'}
                 </span>
               </div>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Repeatable Multi-Scan Cycles & Auto-Updated Cumulative Time</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Database: cse_hackathon | Active Rows: {participants.length}</p>
             </div>
           </div>
 
-          {/* Nav Tabs */}
-          <nav style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-            <button
-              onClick={() => setActiveTab('login')}
-              className={`btn ${activeTab === 'login' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-            >
-              <LogIn size={16} /> 1. Team Login / Register
+          {/* Nav Tabs & Direct MongoDB Sync Button */}
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button onClick={fetchParticipantsFromMongo} className="btn btn-secondary btn-sm" title="Sync live data directly from MongoDB Atlas">
+              <RefreshCw size={14} /> Sync MongoDB Atlas ({participants.length})
             </button>
-            <button
-              onClick={() => setActiveTab('scanner')}
-              className={`btn ${activeTab === 'scanner' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-            >
-              <Camera size={16} /> 2. Camera Scanner
-            </button>
-            <button
-              onClick={() => setActiveTab('admin')}
-              className={`btn ${activeTab === 'admin' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-            >
-              <ShieldCheck size={16} /> 3. Admin View
-            </button>
-          </nav>
+
+            <nav style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '6px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+              <button
+                onClick={() => setActiveTab('login')}
+                className={`btn ${activeTab === 'login' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                <LogIn size={16} /> 1. Team Login / Register
+              </button>
+              <button
+                onClick={() => setActiveTab('scanner')}
+                className={`btn ${activeTab === 'scanner' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                <Camera size={16} /> 2. Camera Scanner
+              </button>
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`btn ${activeTab === 'admin' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                <ShieldCheck size={16} /> 3. Admin View
+              </button>
+            </nav>
+          </div>
         </div>
       </header>
 
@@ -645,7 +666,7 @@ export default function App() {
                       <input
                         type="text"
                         required
-                        placeholder="e.g. TEAM-101, TEAM-204"
+                        placeholder="e.g. TEAM-101, TEAM-102"
                         value={loginTeamInput}
                         onChange={e => setLoginTeamInput(e.target.value)}
                         style={{ fontSize: '1rem', fontWeight: 700, letterSpacing: '0.5px' }}
@@ -680,7 +701,7 @@ export default function App() {
                       <input
                         type="text"
                         required
-                        placeholder="e.g. TEAM-101"
+                        placeholder="e.g. TEAM-104"
                         value={formData.teamNumber}
                         onChange={e => setFormData({ ...formData, teamNumber: e.target.value })}
                         style={{ fontWeight: 700 }}
@@ -721,7 +742,7 @@ export default function App() {
                     </div>
 
                     <button type="submit" className="btn btn-primary" style={{ marginTop: '6px', padding: '14px', width: '100%', fontWeight: 700 }}>
-                      <Database size={18} /> Register & Launch Scanner ➔
+                      <Database size={18} /> Register & Save to MongoDB Atlas ➔
                     </button>
                   </form>
                 </div>
@@ -774,7 +795,7 @@ export default function App() {
               {/* User Selection & Scan Button Simulator */}
               <div style={{ textAlign: 'left', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                  Select Active Student / Team:
+                  Select Active Student / Team ({participants.length} in MongoDB):
                 </label>
 
                 <select
@@ -836,7 +857,7 @@ export default function App() {
                     </div>
                     {activeUser.duration && (
                       <div style={{ color: '#38bdf8', fontWeight: 700, marginTop: '4px' }}>
-                        ⏱ <strong>Cumulative Time:</strong> {activeUser.duration} (Sessions: {activeUser.sessionCount || 1})
+                        ⏱ <strong>Cumulative Duration:</strong> {activeUser.duration} (Sessions: {activeUser.sessionCount || 1})
                       </div>
                     )}
                   </div>
@@ -862,7 +883,7 @@ export default function App() {
 
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={fetchParticipantsFromMongo} className="btn btn-secondary btn-sm">
-                  <RefreshCw size={14} /> Refresh Rows
+                  <RefreshCw size={14} /> Refresh Rows ({participants.length})
                 </button>
                 <button onClick={exportToExcelManual} className="btn btn-success" style={{ height: '42px', fontWeight: 700 }}>
                   <FileSpreadsheet size={18} /> Export to Excel (.xlsx)
