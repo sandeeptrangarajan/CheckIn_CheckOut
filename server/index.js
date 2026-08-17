@@ -36,6 +36,22 @@ function formatDurationMs(totalMs) {
   return parts.join(' ');
 }
 
+// Format Name Title Case
+function toTitleCase(str) {
+  if (!str) return '';
+  return str.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+// Format Team Number
+function formatTeamNumber(teamStr) {
+  if (!teamStr || !teamStr.trim()) return `TEAM-${Math.floor(100 + Math.random() * 900)}`;
+  let clean = teamStr.trim().toUpperCase().replace(/\s+/g, '-');
+  if (!clean.startsWith('TEAM-') && !clean.startsWith('TEAM')) {
+    clean = `TEAM-${clean}`;
+  }
+  return clean;
+}
+
 // MongoDB Database Cluster Connection Handler
 async function connectToMongoCluster() {
   console.log('Connecting to MongoDB Atlas Cluster...');
@@ -66,11 +82,14 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 1. Get all participants
+// 1. Get all participants with populated scan history logs for Admin view
 app.get('/api/participants', async (req, res) => {
   try {
     const participants = await Participant.find()
-      .populate('scanLogs')
+      .populate({
+        path: 'scanLogs',
+        options: { sort: { createdAt: -1 } }
+      })
       .sort({ createdAt: -1 });
     res.json(participants);
   } catch (err) {
@@ -78,7 +97,7 @@ app.get('/api/participants', async (req, res) => {
   }
 });
 
-// 2. Team Login Endpoint (Redirects existing users)
+// 2. Team Login Endpoint (Redirects returning users directly)
 app.post('/api/participants/login', async (req, res) => {
   try {
     const { teamNumber } = req.body;
@@ -86,11 +105,12 @@ app.post('/api/participants/login', async (req, res) => {
       return res.status(400).json({ error: 'Team Number is required' });
     }
 
-    const searchStr = teamNumber.trim().toUpperCase();
+    const searchStr = formatTeamNumber(teamNumber);
     const participant = await Participant.findOne({
       $or: [
         { teamNumber: searchStr },
-        { userId: searchStr }
+        { teamNumber: teamNumber.trim().toUpperCase() },
+        { userId: teamNumber.trim().toUpperCase() }
       ]
     }).populate('scanLogs');
 
@@ -105,7 +125,7 @@ app.post('/api/participants/login', async (req, res) => {
   }
 });
 
-// 3. Register a new participant (First time login / registration)
+// 3. Register a new participant (Formats data properly before saving to MongoDB Atlas)
 app.post('/api/participants/register', async (req, res) => {
   try {
     const { teamNumber, name, email, section } = req.body;
@@ -113,15 +133,18 @@ app.post('/api/participants/register', async (req, res) => {
       return res.status(400).json({ error: 'Student Name, email, and section are required fields.' });
     }
 
-    const formattedTeamNumber = teamNumber && teamNumber.trim() ? teamNumber.trim().toUpperCase() : `TEAM-${Math.floor(100 + Math.random() * 900)}`;
+    const cleanTeamNumber = formatTeamNumber(teamNumber);
+    const cleanName = toTitleCase(name);
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSection = section.trim().toUpperCase().replace(/\s+/g, '-');
     const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newParticipant = new Participant({
       userId,
-      teamNumber: formattedTeamNumber,
-      name: name.trim(),
-      email: email.trim(),
-      section: section.trim(),
+      teamNumber: cleanTeamNumber,
+      name: cleanName,
+      email: cleanEmail,
+      section: cleanSection,
       status: 'registered',
       checkInTime: null,
       checkOutTime: null,
@@ -131,7 +154,7 @@ app.post('/api/participants/register', async (req, res) => {
     });
 
     await newParticipant.save();
-    console.log(`✓ First-Time User Saved to MongoDB Atlas: Team ${formattedTeamNumber} - ${name} (${userId})`);
+    console.log(`✓ Saved Clean Record to MongoDB Atlas: Team ${cleanTeamNumber} - ${cleanName} (${userId})`);
     res.status(201).json(newParticipant);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -212,11 +235,13 @@ app.post('/api/participants/scan', async (req, res) => {
     participant.scanLogs.push(scanLog._id);
     await participant.save();
 
+    const populated = await Participant.findById(participant._id).populate('scanLogs');
+
     console.log(`✓ MongoDB Atlas Row Updated: Team ${participant.teamNumber} - ${participant.name} [${scanType.toUpperCase()} - Session #${participant.sessionCount}]`);
 
     res.json({
       message,
-      participant,
+      participant: populated,
       scanLog
     });
   } catch (err) {

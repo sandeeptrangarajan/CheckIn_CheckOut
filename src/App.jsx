@@ -26,7 +26,10 @@ import {
   Hash,
   KeyRound,
   HelpCircle,
-  RotateCcw
+  RotateCcw,
+  ChevronDown,
+  ChevronRight,
+  History
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -43,6 +46,9 @@ export default function App() {
   const [formData, setFormData] = useState({ teamNumber: '', name: '', email: '', section: '' });
   const [loginTeamInput, setLoginTeamInput] = useState('');
   const [activeUser, setActiveUser] = useState(null);
+
+  // Expanded History Row IDs for Admin
+  const [expandedRows, setExpandedRows] = useState({});
 
   // Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState(null);
@@ -145,6 +151,10 @@ export default function App() {
     } catch (e) {}
   };
 
+  const toggleRowExpansion = (id) => {
+    setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
   // Manual Export to Excel
   const exportToExcelManual = () => {
     if (participants.length === 0) {
@@ -195,7 +205,7 @@ export default function App() {
       return;
     }
 
-    const searchStr = loginTeamInput.trim().toUpperCase();
+    const searchStr = loginTeamInput.trim();
 
     try {
       const res = await fetch(`${API_BASE_URL}/participants/login`, {
@@ -220,36 +230,19 @@ export default function App() {
         fetchParticipantsFromMongo();
         confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
       } else {
-        // Fallback local search
-        const localMatch = participants.find(p => p.teamNumber && p.teamNumber.toUpperCase() === searchStr);
-        if (localMatch) {
-          setActiveUser(localMatch);
-          setActiveTab('scanner');
-          setScanNotice({
-            type: 'success',
-            title: `Welcome back Team ${localMatch.teamNumber}!`,
-            message: `Logged in as ${localMatch.name}. Scanner terminal active.`
-          });
-        } else {
-          alert(`Team Number "${searchStr}" not found in MongoDB Atlas. Redirecting to New Registration for Team ${searchStr}...`);
-          setFormData(prev => ({ ...prev, teamNumber: searchStr }));
-          setLoginMode('register');
-        }
-      }
-    } catch (err) {
-      console.warn('Login fetch error, local fallback:', err);
-      const localMatch = participants.find(p => p.teamNumber && p.teamNumber.toUpperCase() === searchStr);
-      if (localMatch) {
-        setActiveUser(localMatch);
-        setActiveTab('scanner');
-      } else {
-        setFormData(prev => ({ ...prev, teamNumber: searchStr }));
+        const errData = await res.json();
+        alert(`Team Lookup Notice: ${errData.error || 'Team not found'}. Redirecting to New Registration...`);
+        setFormData(prev => ({ ...prev, teamNumber: searchStr.toUpperCase() }));
         setLoginMode('register');
       }
+    } catch (err) {
+      console.warn('Login fetch error:', err);
+      setFormData(prev => ({ ...prev, teamNumber: searchStr.toUpperCase() }));
+      setLoginMode('register');
     }
   };
 
-  // First Time Registration -> SAVES TO MONGODB ATLAS & REDIRECTS DIRECTLY TO SCANNER
+  // First Time Registration -> SAVES PROPERLY FORMATTED DATA TO MONGODB ATLAS & REDIRECTS DIRECTLY TO SCANNER
   const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.teamNumber.trim() || !formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
@@ -257,15 +250,13 @@ export default function App() {
       return;
     }
 
-    const formattedTeamNumber = formData.teamNumber.trim().toUpperCase();
-
     try {
-      console.log('Sending first-time registration to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
+      console.log('Sending registration to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
       const res = await fetch(`${API_BASE_URL}/participants/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          teamNumber: formattedTeamNumber,
+          teamNumber: formData.teamNumber.trim(),
           name: formData.name.trim(),
           email: formData.email.trim(),
           section: formData.section.trim()
@@ -274,8 +265,8 @@ export default function App() {
 
       if (res.ok) {
         const newUser = await res.json();
-        console.log('✓ First-Time User Saved to MongoDB Atlas:', newUser);
-        const formattedUser = { ...newUser, id: newUser.userId, teamNumber: newUser.teamNumber || formattedTeamNumber, sessionCount: 0 };
+        console.log('✓ Clean Document Saved to MongoDB Atlas:', newUser);
+        const formattedUser = { ...newUser, id: newUser.userId, teamNumber: newUser.teamNumber, sessionCount: 0 };
         
         setParticipants(prev => [formattedUser, ...prev]);
         setActiveUser(formattedUser);
@@ -284,8 +275,8 @@ export default function App() {
         setActiveTab('scanner'); // DIRECT REDIRECT TO SCANNER SECTION
         setScanNotice({
           type: 'info',
-          title: `✓ Saved Row to MongoDB Atlas!`,
-          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) created in MongoDB Atlas (ID: ${formattedUser.userId}). Ready to scan!`
+          title: `✓ Clean Row Saved to MongoDB Atlas!`,
+          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) inserted into MongoDB Atlas (ID: ${formattedUser.userId}). Ready to scan!`
         });
 
         await fetchParticipantsFromMongo();
@@ -296,7 +287,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Registration fetch error:', err);
-      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure server is running.`);
+      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure express server is running.`);
     }
   };
 
@@ -964,89 +955,148 @@ export default function App() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                   <thead>
                     <tr style={{ background: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                      <th style={{ padding: '14px 16px', width: '40px' }}></th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>TEAM NUMBER</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>NAME OF THE STUDENT & EMAIL</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CLASS / SECTION</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>STUDENT NAME & EMAIL</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>SECTION</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>STATUS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>SESSIONS</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>LATEST CHECK-IN</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>LATEST CHECK-OUT</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CUMULATIVE IN-BETWEEN TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-IN TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-OUT TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>CUMULATIVE DURATION</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredParticipants.length === 0 ? (
                       <tr>
-                        <td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                        <td colSpan={10} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
                           No database rows in MongoDB.
                         </td>
                       </tr>
                     ) : (
-                      filteredParticipants.map(p => (
-                        <tr key={p.id || p.userId} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <td style={{ padding: '14px 16px' }}>
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#38bdf8', fontWeight: 800, background: 'rgba(56, 189, 248, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
-                              {p.teamNumber || 'TEAM-101'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '14px 16px' }}>
-                            <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{p.name}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.email}</div>
-                          </td>
-                          <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{p.section}</td>
-                          <td style={{ padding: '14px 16px' }}>
-                            <span style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              padding: '4px 10px',
-                              borderRadius: '20px',
-                              fontSize: '0.75rem',
-                              fontWeight: 700,
-                              background: p.status === 'registered' ? 'rgba(245, 158, 11, 0.15)' :
-                                          p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
-                              color: p.status === 'registered' ? '#f59e0b' :
-                                     p.status === 'checked-in' ? '#10b981' : '#f43f5e',
-                              border: `1px solid ${p.status === 'registered' ? 'rgba(245, 158, 11, 0.3)' :
-                                                   p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`
-                            }}>
-                              {p.status === 'registered' && '⏳ Registered'}
-                              {p.status === 'checked-in' && '✓ Checked-In'}
-                              {p.status === 'checked-out' && '✓✓ Checked-Out'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '14px 16px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary)' }}>
-                            #{p.sessionCount || 0}
-                          </td>
-                          <td style={{ padding: '14px 16px', color: p.checkInTime ? 'var(--accent-emerald)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
-                            {p.checkInTime || '-'}
-                          </td>
-                          <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
-                            {p.checkOutTime || '-'}
-                          </td>
-                          <td style={{ padding: '14px 16px', color: p.duration ? '#38bdf8' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 700 }}>
-                            {p.duration || '-'}
-                          </td>
-                          <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                              <button
-                                onClick={() => initiateScanProcess(p.id || p.userId)}
-                                className={`btn btn-sm ${p.status === 'registered' ? 'btn-success' : p.status === 'checked-in' ? 'btn-danger' : 'btn-primary'}`}
-                              >
-                                <ScanLine size={14} /> {p.status === 'registered' ? 'Scan In' : p.status === 'checked-in' ? 'Scan Out' : 'Scan Again'}
-                              </button>
-                              <button
-                                onClick={() => handleDelete(p.id || p._id || p.userId)}
-                                className="btn btn-danger btn-sm"
-                                style={{ padding: '6px 8px' }}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                      filteredParticipants.map(p => {
+                        const isExpanded = !!expandedRows[p.id || p._id];
+                        const logs = p.scanLogs || [];
+
+                        return (
+                          <React.Fragment key={p.id || p.userId || p._id}>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isExpanded ? 'rgba(30, 41, 59, 0.4)' : 'transparent' }}>
+                              <td style={{ padding: '14px 16px', textCenter: 'center' }}>
+                                <button
+                                  onClick={() => toggleRowExpansion(p.id || p._id)}
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  title="Expand Audit Scan Logs"
+                                >
+                                  {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                </button>
+                              </td>
+                              <td style={{ padding: '14px 16px' }}>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#38bdf8', fontWeight: 800, background: 'rgba(56, 189, 248, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+                                  {p.teamNumber || 'TEAM-101'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '14px 16px' }}>
+                                <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{p.name}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.email}</div>
+                              </td>
+                              <td style={{ padding: '14px 16px' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#cbd5e1', background: 'rgba(255,255,255,0.06)', padding: '3px 8px', borderRadius: '6px' }}>
+                                  {p.section}
+                                </span>
+                              </td>
+                              <td style={{ padding: '14px 16px' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '4px 10px',
+                                  borderRadius: '20px',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 700,
+                                  background: p.status === 'registered' ? 'rgba(245, 158, 11, 0.15)' :
+                                              p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+                                  color: p.status === 'registered' ? '#f59e0b' :
+                                         p.status === 'checked-in' ? '#10b981' : '#f43f5e',
+                                  border: `1px solid ${p.status === 'registered' ? 'rgba(245, 158, 11, 0.3)' :
+                                                       p.status === 'checked-in' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`
+                                }}>
+                                  {p.status === 'registered' && '⏳ Registered'}
+                                  {p.status === 'checked-in' && '✓ Checked-In'}
+                                  {p.status === 'checked-out' && '✓✓ Checked-Out'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '14px 16px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary)' }}>
+                                #{p.sessionCount || 0}
+                              </td>
+                              <td style={{ padding: '14px 16px', color: p.checkInTime ? 'var(--accent-emerald)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
+                                {p.checkInTime || '-'}
+                              </td>
+                              <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
+                                {p.checkOutTime || '-'}
+                              </td>
+                              <td style={{ padding: '14px 16px', color: p.duration ? '#38bdf8' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 700 }}>
+                                {p.duration || '-'}
+                              </td>
+                              <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                  <button
+                                    onClick={() => initiateScanProcess(p.id || p.userId)}
+                                    className={`btn btn-sm ${p.status === 'registered' ? 'btn-success' : p.status === 'checked-in' ? 'btn-danger' : 'btn-primary'}`}
+                                  >
+                                    <ScanLine size={14} /> {p.status === 'registered' ? 'Scan In' : p.status === 'checked-in' ? 'Scan Out' : 'Scan Again'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(p.id || p._id || p.userId)}
+                                    className="btn btn-danger btn-sm"
+                                    style={{ padding: '6px 8px' }}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+
+                            {/* Expandable Audit Log Details Row */}
+                            {isExpanded && (
+                              <tr style={{ background: 'rgba(15, 23, 42, 0.95)' }}>
+                                <td colSpan={10} style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 700, fontSize: '0.85rem', marginBottom: '12px' }}>
+                                    <History size={16} /> Audit Scan Logs History for Team {p.teamNumber} ({p.name})
+                                  </div>
+
+                                  {logs.length === 0 ? (
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>No scan logs recorded yet for this team.</p>
+                                  ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                      {logs.map((log, lIdx) => (
+                                        <div key={log._id || lIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: 'rgba(30, 41, 59, 0.6)', borderRadius: '8px', fontSize: '0.8rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <span style={{
+                                              padding: '2px 8px',
+                                              borderRadius: '12px',
+                                              fontSize: '0.7rem',
+                                              fontWeight: 800,
+                                              background: log.scanType === 'check-in' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(244, 63, 94, 0.2)',
+                                              color: log.scanType === 'check-in' ? '#10b981' : '#f43f5e'
+                                            }}>
+                                              {log.scanType.toUpperCase()}
+                                            </span>
+                                            <span style={{ color: '#fff', fontWeight: 600 }}>Timestamp: {log.timestamp}</span>
+                                          </div>
+                                          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                            Logged ID: {log.userId || p.userId}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
