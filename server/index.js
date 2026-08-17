@@ -24,7 +24,6 @@ app.use(express.json());
 async function connectToMongoCluster() {
   console.log('Connecting to MongoDB Atlas Cluster...');
   try {
-    // Attempt 1: Standard Atlas SRV Cluster URL
     await mongoose.connect(MONGODB_URI, {
       serverSelectionTimeoutMS: 5000
     });
@@ -32,7 +31,6 @@ async function connectToMongoCluster() {
   } catch (srvErr) {
     console.warn('⚠ Atlas SRV lookup failed, falling back to direct Cluster Replica Set Seeds:', srvErr.message);
     try {
-      // Attempt 2: Direct Shard Replica Set Connection String
       await mongoose.connect(MONGODB_REPLICA_URI);
       console.log('✓ Successfully connected to MongoDB Atlas Cluster Replica Set (atlas-11a9cr-shard-0 / cse_hackathon)');
     } catch (replicaErr) {
@@ -42,8 +40,6 @@ async function connectToMongoCluster() {
 }
 
 connectToMongoCluster();
-
-// API Routes
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -56,7 +52,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 1. Get all participants (populating interconnected scan logs)
+// 1. Get all participants
 app.get('/api/participants', async (req, res) => {
   try {
     const participants = await Participant.find()
@@ -68,34 +64,37 @@ app.get('/api/participants', async (req, res) => {
   }
 });
 
-// 2. Register a new participant
+// 2. Register a new participant with Team Number & Student Name
 app.post('/api/participants/register', async (req, res) => {
   try {
-    const { name, email, section } = req.body;
+    const { teamNumber, name, email, section } = req.body;
     if (!name || !email || !section) {
-      return res.status(400).json({ error: 'Name, email, and section are required fields.' });
+      return res.status(400).json({ error: 'Student Name, email, and section are required fields.' });
     }
 
+    const formattedTeamNumber = teamNumber && teamNumber.trim() ? teamNumber.trim().toUpperCase() : `TEAM-${Math.floor(100 + Math.random() * 900)}`;
     const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newParticipant = new Participant({
       userId,
-      name,
-      email,
-      section,
+      teamNumber: formattedTeamNumber,
+      name: name.trim(),
+      email: email.trim(),
+      section: section.trim(),
       status: 'registered',
       checkInTime: null,
       checkOutTime: null
     });
 
     await newParticipant.save();
-    console.log(`✓ Saved new participant to MongoDB Cluster: ${name} (${userId})`);
+    console.log(`✓ Saved to MongoDB Database: Team ${formattedTeamNumber} - ${name} (${userId})`);
     res.status(201).json(newParticipant);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Process Check-In & Check-Out with interconnected ScanLog creation
+// 3. Process Check-In (1st Scan) & Check-Out (2nd Scan) with interconnected ScanLog creation
 app.post('/api/participants/scan', async (req, res) => {
   try {
     const { targetUserId } = req.body;
@@ -121,18 +120,20 @@ app.post('/api/participants/scan', async (req, res) => {
     let message = '';
 
     if (participant.status === 'registered') {
+      // 1st SCAN -> CHECK-IN
       scanType = 'check-in';
       participant.status = 'checked-in';
       participant.checkInTime = nowFormatted;
-      message = `✓ Check-In Recorded for ${participant.name} at ${nowFormatted}`;
+      message = `✓ Check-In Recorded for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
     } else if (participant.status === 'checked-in') {
+      // 2nd SCAN -> CHECK-OUT
       scanType = 'check-out';
       participant.status = 'checked-out';
       participant.checkOutTime = nowFormatted;
-      message = `✓✓ Check-Out Recorded for ${participant.name} at ${nowFormatted}`;
+      message = `✓✓ Check-Out Recorded for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
     } else {
       return res.status(400).json({
-        message: `ℹ ${participant.name} has already completed attendance!`,
+        message: `ℹ Team ${participant.teamNumber} (${participant.name}) has already completed attendance!`,
         participant
       });
     }
@@ -151,7 +152,7 @@ app.post('/api/participants/scan', async (req, res) => {
     participant.scanLogs.push(scanLog._id);
     await participant.save();
 
-    console.log(`✓ Updated Cluster Attendance & ScanLog: ${participant.name} [${scanType.toUpperCase()}]`);
+    console.log(`✓ Updated Cluster Record & ScanLog: Team ${participant.teamNumber} - ${participant.name} [${scanType.toUpperCase()}]`);
 
     res.json({
       message,
@@ -180,7 +181,7 @@ app.delete('/api/participants/:id', async (req, res) => {
     }
 
     await ScanLog.deleteMany({ participant: participant._id });
-    res.json({ message: 'Participant and connected logs deleted from cluster' });
+    res.json({ message: 'Participant row and connected logs deleted from cluster' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

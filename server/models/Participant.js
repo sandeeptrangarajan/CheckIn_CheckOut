@@ -7,6 +7,12 @@ const participantSchema = new mongoose.Schema({
     unique: true,
     index: true
   },
+  teamNumber: {
+    type: String,
+    required: true,
+    trim: true,
+    default: 'TEAM-101'
+  },
   name: {
     type: String,
     required: true,

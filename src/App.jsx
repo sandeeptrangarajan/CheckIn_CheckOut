@@ -22,7 +22,8 @@ import {
   ShieldCheck,
   RefreshCw,
   AlertCircle,
-  Database
+  Database,
+  Hash
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -34,8 +35,8 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('register'); // 'register' | 'scanner' | 'admin'
 
-  // Registration Form State
-  const [formData, setFormData] = useState({ name: '', email: '', section: '' });
+  // Registration Form State (Team Number, Name of Student, Email, Section)
+  const [formData, setFormData] = useState({ teamNumber: '', name: '', email: '', section: '' });
   const [activeUser, setActiveUser] = useState(null);
 
   // Common Master QR Code Data URL
@@ -51,7 +52,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Fetch all interconnected participant data from MongoDB API on mount
+  // Fetch all interconnected participant database rows from MongoDB API on mount
   const fetchParticipantsFromMongo = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/participants`);
@@ -59,7 +60,8 @@ export default function App() {
         const data = await res.json();
         setParticipants(data.map(p => ({
           ...p,
-          id: p.userId || p._id
+          id: p.userId || p._id,
+          teamNumber: p.teamNumber || 'TEAM-101'
         })));
         setDbStatus('connected');
       } else {
@@ -68,7 +70,7 @@ export default function App() {
     } catch (err) {
       console.warn('MongoDB API offline, fallback to LocalStorage:', err);
       setDbStatus('offline');
-      const saved = localStorage.getItem('hackathon_mongo_backup_v10');
+      const saved = localStorage.getItem('hackathon_team_row_backup_v11');
       if (saved) setParticipants(JSON.parse(saved));
     }
   };
@@ -80,7 +82,7 @@ export default function App() {
   // Sync state fallback to LocalStorage
   useEffect(() => {
     if (participants.length > 0) {
-      localStorage.setItem('hackathon_mongo_backup_v10', JSON.stringify(participants));
+      localStorage.setItem('hackathon_team_row_backup_v11', JSON.stringify(participants));
     }
   }, [participants]);
 
@@ -125,28 +127,29 @@ export default function App() {
   // Manual Export to Excel
   const exportToExcelManual = () => {
     if (participants.length === 0) {
-      alert('No participant records in MongoDB database to export.');
+      alert('No participant database rows to export.');
       return;
     }
 
     const exportData = participants.map((p, idx) => ({
       'S.No': idx + 1,
+      'Team Number': p.teamNumber || 'TEAM-101',
       'User ID': p.id || p.userId,
-      'Full Name': p.name,
+      'Name of Student': p.name,
       'Email Address': p.email,
       'Class/Section': p.section,
       'Status': p.status.toUpperCase(),
       'Check-In Time': p.checkInTime || 'Pending',
       'Check-Out Time': p.checkOutTime || 'Pending',
-      'Interconnected Logs': p.scanLogs ? p.scanLogs.length : 0
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'MongoDB Attendance');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Roster');
 
     worksheet['!cols'] = [
       { wch: 6 },
+      { wch: 14 },
       { wch: 15 },
       { wch: 22 },
       { wch: 26 },
@@ -154,25 +157,29 @@ export default function App() {
       { wch: 14 },
       { wch: 22 },
       { wch: 22 },
-      { wch: 20 },
     ];
 
-    XLSX.writeFile(workbook, `MongoDB_Hackathon_Attendance_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(workbook, `Hackathon_Attendance_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
-  // 1 & 2. Details Entry -> Register to MongoDB & Launch Scanner Terminal
+  // Register Participant row in MongoDB
   const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
-      alert('Please fill out all fields.');
+      alert('Please fill out all required fields.');
       return;
     }
+
+    const formattedTeamNumber = formData.teamNumber && formData.teamNumber.trim() 
+      ? formData.teamNumber.trim().toUpperCase() 
+      : `TEAM-${Math.floor(100 + Math.random() * 900)}`;
 
     try {
       const res = await fetch(`${API_BASE_URL}/participants/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          teamNumber: formattedTeamNumber,
           name: formData.name.trim(),
           email: formData.email.trim(),
           section: formData.section.trim()
@@ -181,17 +188,17 @@ export default function App() {
 
       if (res.ok) {
         const newUser = await res.json();
-        const formattedUser = { ...newUser, id: newUser.userId };
+        const formattedUser = { ...newUser, id: newUser.userId, teamNumber: newUser.teamNumber || formattedTeamNumber };
         
         setParticipants(prev => [formattedUser, ...prev]);
         setActiveUser(formattedUser);
-        setFormData({ name: '', email: '', section: '' });
+        setFormData({ teamNumber: '', name: '', email: '', section: '' });
         
         setActiveTab('scanner');
         setScanNotice({
           type: 'info',
-          title: `MongoDB Saved: ${formattedUser.name}`,
-          message: `User created in MongoDB database. Scanner terminal ready!`
+          title: `MongoDB Saved: Team ${formattedUser.teamNumber} - ${formattedUser.name}`,
+          message: `Database row created in MongoDB! Scanner terminal active.`
         });
 
         confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
@@ -204,6 +211,7 @@ export default function App() {
       const newUser = {
         id: userId,
         userId,
+        teamNumber: formattedTeamNumber,
         name: formData.name.trim(),
         email: formData.email.trim(),
         section: formData.section.trim(),
@@ -214,19 +222,19 @@ export default function App() {
 
       setParticipants(prev => [newUser, ...prev]);
       setActiveUser(newUser);
-      setFormData({ name: '', email: '', section: '' });
+      setFormData({ teamNumber: '', name: '', email: '', section: '' });
       setActiveTab('scanner');
     }
   };
 
-  // Core Interconnected MongoDB Scan Transition Processor
+  // Core MongoDB Scan Processor (1st scan = Check-In, 2nd scan = Check-Out)
   const processScanForUser = async (targetUserId) => {
     const userToUpdate = participants.find(p => p.id === targetUserId || p.userId === targetUserId) || activeUser;
     if (!userToUpdate) {
       setScanNotice({
         type: 'error',
         title: 'No User Selected',
-        message: 'Please register or select a user from the dropdown first.'
+        message: 'Please register or select a student from the dropdown first.'
       });
       return;
     }
@@ -250,7 +258,7 @@ export default function App() {
         setScanNotice({
           type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
           title: result.message,
-          message: `Connected MongoDB ScanLog created & linked for ${updatedUser.name}`
+          message: `Team ${updatedUser.teamNumber} database row updated in MongoDB Atlas`
         });
 
         if (updatedUser.status === 'checked-in') {
@@ -260,13 +268,12 @@ export default function App() {
         const errData = await res.json();
         setScanNotice({
           type: 'warning',
-          title: 'MongoDB Scan Message',
+          title: 'MongoDB Scan Notice',
           message: errData.message || errData.error
         });
       }
     } catch (err) {
       console.warn('Fallback offline scan:', err);
-      // Offline transition fallback
       const nowFormatted = new Date().toLocaleString('en-IN', {
         day: '2-digit', month: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit', hour12: true
@@ -341,7 +348,7 @@ export default function App() {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Delete this record from MongoDB database?')) {
+    if (window.confirm('Delete this database row from MongoDB?')) {
       try {
         await fetch(`${API_BASE_URL}/participants/${id}`, { method: 'DELETE' });
       } catch (e) {}
@@ -363,7 +370,8 @@ export default function App() {
 
   // Filtered Roster for Admin
   const filteredParticipants = participants.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchesSearch = (p.teamNumber && p.teamNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                          p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (p.id && p.id.toLowerCase().includes(searchQuery.toLowerCase())) ||
                           p.section.toLowerCase().includes(searchQuery.toLowerCase());
@@ -384,7 +392,7 @@ export default function App() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                  HACKPORTAL MongoDB
+                  HACKPORTAL MongoDB Portal
                 </h1>
                 <span style={{
                   padding: '3px 10px',
@@ -398,7 +406,7 @@ export default function App() {
                   {dbStatus === 'connected' ? 'MongoDB Atlas Connected' : 'Local Fallback'}
                 </span>
               </div>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Interconnected Participant & ScanLog Schemas</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Schema: Team Number | Student Name | Check-In Time | Check-Out Time</p>
             </div>
           </div>
 
@@ -466,18 +474,29 @@ export default function App() {
                   <UserPlus size={24} />
                 </div>
                 <div>
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Enter User Details</h2>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Data saves directly to MongoDB Atlas database</p>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Enter Student & Team Details</h2>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Creates a database row in MongoDB (Team Number, Name, Check-In/Out)</p>
                 </div>
               </div>
 
               <form onSubmit={handleRegisterUser} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Full Name *</label>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Team Number (e.g. TEAM-101) *</label>
                   <input
                     type="text"
                     required
-                    placeholder="Enter full name"
+                    placeholder="e.g. TEAM-101, TEAM-204"
+                    value={formData.teamNumber}
+                    onChange={e => setFormData({ ...formData, teamNumber: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>Name of the Student *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter student full name"
                     value={formData.name}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
                   />
@@ -488,7 +507,7 @@ export default function App() {
                   <input
                     type="email"
                     required
-                    placeholder="your.email@domain.com"
+                    placeholder="student.email@domain.com"
                     value={formData.email}
                     onChange={e => setFormData({ ...formData, email: e.target.value })}
                   />
@@ -506,7 +525,7 @@ export default function App() {
                 </div>
 
                 <button type="submit" className="btn btn-primary" style={{ marginTop: '10px', padding: '14px', width: '100%', fontWeight: 700 }}>
-                  <Database size={18} /> Save to MongoDB & Launch Camera Scanner
+                  <Database size={18} /> Save Row to MongoDB & Launch Camera Scanner
                 </button>
               </form>
             </div>
@@ -524,7 +543,7 @@ export default function App() {
               </div>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '4px' }}>Real Camera Scanner</h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-                Selected User: <strong style={{ color: '#fff' }}>{activeUser ? activeUser.name : 'Select user below'}</strong>
+                Selected Student: <strong style={{ color: '#fff' }}>{activeUser ? `${activeUser.name} (${activeUser.teamNumber})` : 'Select student below'}</strong>
               </p>
 
               {/* Webcam Viewport */}
@@ -556,7 +575,7 @@ export default function App() {
               {/* User Selection & Scan Button Simulator */}
               <div style={{ textAlign: 'left', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                  Select User to Process Attendance Scan:
+                  Select Student / Team to Process Scan:
                 </label>
 
                 <select
@@ -569,7 +588,7 @@ export default function App() {
                 >
                   {participants.map(p => (
                     <option key={p.id || p.userId} value={p.id || p.userId}>
-                      {p.name} ({p.section}) - Status: {p.status.toUpperCase()}
+                      Team {p.teamNumber} - {p.name} ({p.section}) [{p.status.toUpperCase()}]
                     </option>
                   ))}
                 </select>
@@ -608,14 +627,14 @@ export default function App() {
 
               {activeUser && (
                 <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', textAlign: 'left', fontSize: '0.8rem' }}>
-                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>MONGODB USER RECORD:</div>
-                  <div style={{ fontWeight: 700, color: '#fff' }}>{activeUser.name} ({activeUser.section})</div>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>SELECTED ROW:</div>
+                  <div style={{ fontWeight: 700, color: '#fff' }}>Team {activeUser.teamNumber}: {activeUser.name} ({activeUser.section})</div>
                   <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
                     <span style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
-                      IN: {activeUser.checkInTime || 'Pending'}
+                      Check-In: {activeUser.checkInTime || 'Pending'}
                     </span>
                     <span style={{ color: activeUser.checkOutTime ? '#f87171' : 'var(--text-dim)' }}>
-                      OUT: {activeUser.checkOutTime || 'Pending'}
+                      Check-Out: {activeUser.checkOutTime || 'Pending'}
                     </span>
                   </div>
                 </div>
@@ -634,13 +653,13 @@ export default function App() {
               <div>
                 <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Admin MongoDB Master Control</h2>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Interconnected data from MongoDB Atlas database (<strong style={{ color: '#10b981' }}>cse_hackathon</strong>)
+                  Database rows in MongoDB Atlas database (<strong style={{ color: '#10b981' }}>cse_hackathon</strong>)
                 </p>
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={fetchParticipantsFromMongo} className="btn btn-secondary btn-sm">
-                  <RefreshCw size={14} /> Refresh DB Data
+                  <RefreshCw size={14} /> Refresh Rows
                 </button>
                 <button onClick={exportToExcelManual} className="btn btn-success" style={{ height: '42px', fontWeight: 700 }}>
                   <FileSpreadsheet size={18} /> Export to Excel (.xlsx)
@@ -655,7 +674,7 @@ export default function App() {
                   <Users size={24} />
                 </div>
                 <div>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL USERS</p>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL STUDENTS</p>
                   <h3 style={{ fontSize: '1.6rem', fontWeight: 800 }}>{stats.total}</h3>
                 </div>
               </div>
@@ -697,8 +716,8 @@ export default function App() {
             <div className="glass-panel" style={{ padding: '28px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                 <div>
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>MongoDB Roster & Interconnected Logs</h2>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Each record links directly to Mongoose `Participant` & `ScanLog` schemas</p>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>MongoDB Attendance Master Roster</h2>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Each row contains Team Number, Student Name, Check-In Time & Check-Out Time</p>
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -706,7 +725,7 @@ export default function App() {
                     <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
                     <input
                       type="text"
-                      placeholder="Search ID, name, section..."
+                      placeholder="Search team, student, section..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
                       style={{ paddingLeft: '36px', height: '40px', fontSize: '0.85rem' }}
@@ -730,31 +749,32 @@ export default function App() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                   <thead>
                     <tr style={{ background: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>USER ID</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>FULL NAME & EMAIL</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>TEAM NUMBER</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>NAME OF THE STUDENT & EMAIL</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CLASS / SECTION</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>STATUS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-IN TIME</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-OUT TIME</th>
-                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>INTERCONNECTED LOGS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredParticipants.length === 0 ? (
                       <tr>
-                        <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                          No records in MongoDB database.
+                        <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                          No database rows in MongoDB.
                         </td>
                       </tr>
                     ) : (
                       filteredParticipants.map(p => (
                         <tr key={p.id || p.userId} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <td style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
-                            {p.id || p.userId}
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#38bdf8', fontWeight: 800, background: 'rgba(56, 189, 248, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+                              {p.teamNumber || 'TEAM-101'}
+                            </span>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{p.name}</div>
+                            <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{p.name}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.email}</div>
                           </td>
                           <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{p.section}</td>
@@ -779,16 +799,11 @@ export default function App() {
                               {p.status === 'checked-out' && '✓✓ Checked-Out'}
                             </span>
                           </td>
-                          <td style={{ padding: '14px 16px', color: p.checkInTime ? 'var(--accent-emerald)' : 'var(--text-dim)', fontSize: '0.8rem' }}>
+                          <td style={{ padding: '14px 16px', color: p.checkInTime ? 'var(--accent-emerald)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
                             {p.checkInTime || '-'}
                           </td>
-                          <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem' }}>
+                          <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem', fontWeight: 600 }}>
                             {p.checkOutTime || '-'}
-                          </td>
-                          <td style={{ padding: '14px 16px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            <span style={{ background: 'rgba(99, 102, 241, 0.15)', padding: '2px 8px', borderRadius: '10px', border: '1px solid rgba(99, 102, 241, 0.3)', color: '#818cf8', fontWeight: 600 }}>
-                              {p.scanLogs ? `${p.scanLogs.length} ScanLogs` : '0 ScanLogs'}
-                            </span>
                           </td>
                           <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
