@@ -20,6 +20,12 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Log every incoming API request for debugging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
 // Helper function to format duration milliseconds into readable text string
 function formatDurationMs(totalMs) {
   if (!totalMs || totalMs <= 0) return '0s';
@@ -38,7 +44,7 @@ function formatDurationMs(totalMs) {
 
 // Format Name Title Case
 function toTitleCase(str) {
-  if (!str) return '';
+  if (!str) return 'Anonymous Student';
   return str.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
 
@@ -129,14 +135,11 @@ app.post('/api/participants/login', async (req, res) => {
 app.post('/api/participants/register', async (req, res) => {
   try {
     const { teamNumber, name, email, section } = req.body;
-    if (!name || !email || !section) {
-      return res.status(400).json({ error: 'Student Name, email, and section are required fields.' });
-    }
 
     const cleanTeamNumber = formatTeamNumber(teamNumber);
-    const cleanName = toTitleCase(name);
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanSection = section.trim().toUpperCase().replace(/\s+/g, '-');
+    const cleanName = toTitleCase(name || 'Hackathon Participant');
+    const cleanEmail = (email && email.trim()) ? email.trim().toLowerCase() : `student.${Math.floor(100 + Math.random() * 900)}@example.com`;
+    const cleanSection = (section && section.trim()) ? section.trim().toUpperCase().replace(/\s+/g, '-') : 'CSE-A';
     const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newParticipant = new Participant({
@@ -154,9 +157,10 @@ app.post('/api/participants/register', async (req, res) => {
     });
 
     await newParticipant.save();
-    console.log(`✓ Saved Clean Record to MongoDB Atlas: Team ${cleanTeamNumber} - ${cleanName} (${userId})`);
+    console.log(`✓ SUCCESS: Saved New Document to MongoDB Atlas: Team ${cleanTeamNumber} - ${cleanName} (${userId})`);
     res.status(201).json(newParticipant);
   } catch (err) {
+    console.error('❌ Registration Save Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -272,7 +276,7 @@ app.delete('/api/participants/:id', async (req, res) => {
   }
 });
 
-// Start Express Server listening on 0.0.0.0 (Accepts localhost, 127.0.0.1, and local IP)
+// Start Express Server listening on 0.0.0.0
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Hackathon Express Server listening on port ${PORT} (0.0.0.0)`);
   console.log(`📡 API Base URL: http://localhost:${PORT}/api`);
