@@ -34,7 +34,7 @@ const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
 
 export default function App() {
   const [participants, setParticipants] = useState([]);
-  const [dbStatus, setDbStatus] = useState('connecting'); // 'connecting' | 'connected' | 'offline'
+  const [dbStatus, setDbStatus] = useState('connecting');
 
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'scanner' | 'admin'
   const [loginMode, setLoginMode] = useState('register'); // 'register' | 'existing_login'
@@ -91,12 +91,12 @@ export default function App() {
     }
   };
 
-  // Poll MongoDB Atlas API every 4 seconds for real-time live synchronization
+  // Poll MongoDB Atlas API every 3 seconds for real-time live synchronization
   useEffect(() => {
     fetchParticipantsFromMongo();
     const interval = setInterval(() => {
       fetchParticipantsFromMongo();
-    }, 4000);
+    }, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -218,7 +218,7 @@ export default function App() {
     }
   };
 
-  // Register New Student & Team Row -> DIRECTLY REDIRECT TO SCANNER SECTION
+  // Register New Student & Team Row -> SAVES DIRECTLY TO MONGODB ATLAS & REDIRECTS TO SCANNER
   const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.teamNumber.trim() || !formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
@@ -229,6 +229,7 @@ export default function App() {
     const formattedTeamNumber = formData.teamNumber.trim().toUpperCase();
 
     try {
+      console.log('Sending registration request to MongoDB Atlas API:', `${API_BASE_URL}/participants/register`);
       const res = await fetch(`${API_BASE_URL}/participants/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -242,6 +243,7 @@ export default function App() {
 
       if (res.ok) {
         const newUser = await res.json();
+        console.log('✓ Successfully registered and saved document in MongoDB Atlas:', newUser);
         const formattedUser = { ...newUser, id: newUser.userId, teamNumber: newUser.teamNumber || formattedTeamNumber, sessionCount: 0 };
         
         setParticipants(prev => [formattedUser, ...prev]);
@@ -251,36 +253,19 @@ export default function App() {
         setActiveTab('scanner');
         setScanNotice({
           type: 'info',
-          title: `✓ Saved Row to MongoDB Atlas!`,
-          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) created in MongoDB Atlas. Ready to scan QR code!`
+          title: `✓ Saved Document in MongoDB Atlas!`,
+          message: `Team ${formattedUser.teamNumber} (${formattedUser.name}) inserted into MongoDB Atlas database (ID: ${formattedUser.userId}). Ready to scan!`
         });
 
-        fetchParticipantsFromMongo();
+        await fetchParticipantsFromMongo();
         confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
       } else {
-        throw new Error('Registration failed');
+        const errData = await res.json();
+        alert(`MongoDB Registration Error: ${errData.error || 'Server rejected registration'}`);
       }
     } catch (err) {
-      console.warn('Fallback offline registration:', err);
-      const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
-      const newUser = {
-        id: userId,
-        userId,
-        teamNumber: formattedTeamNumber,
-        name: formData.name.trim(),
-        email: formData.email.trim(),
-        section: formData.section.trim(),
-        status: 'registered',
-        checkInTime: null,
-        checkOutTime: null,
-        duration: null,
-        sessionCount: 0
-      };
-
-      setParticipants(prev => [newUser, ...prev]);
-      setActiveUser(newUser);
-      setFormData({ teamNumber: '', name: '', email: '', section: '' });
-      setActiveTab('scanner');
+      console.error('Registration fetch error:', err);
+      alert(`MongoDB Server Connection Error: ${err.message}. Please ensure express server is running on port 5000.`);
     }
   };
 
@@ -334,11 +319,11 @@ export default function App() {
           type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
           title: result.message,
           message: updatedUser.status === 'checked-out' 
-            ? `Cumulative duration saved in MongoDB Atlas database: ${updatedUser.duration}` 
-            : `Check-in recorded in MongoDB Atlas database.`
+            ? `Cumulative duration updated in MongoDB Atlas: ${updatedUser.duration}` 
+            : `Session Check-In saved in MongoDB Atlas.`
         });
 
-        fetchParticipantsFromMongo();
+        await fetchParticipantsFromMongo();
 
         if (updatedUser.status === 'checked-in') {
           confetti({ particleCount: 50, spread: 50, origin: { y: 0.7 } });
@@ -353,31 +338,6 @@ export default function App() {
       }
     } catch (err) {
       console.warn('Fallback offline scan:', err);
-      const nowFormatted = new Date().toLocaleString('en-IN', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-      });
-
-      let updated;
-      if (userToUpdate.status === 'registered' || userToUpdate.status === 'checked-out') {
-        updated = { 
-          ...userToUpdate, 
-          status: 'checked-in', 
-          checkInTime: nowFormatted, 
-          checkOutTime: null,
-          sessionCount: (userToUpdate.sessionCount || 0) + 1 
-        };
-      } else if (userToUpdate.status === 'checked-in') {
-        updated = { 
-          ...userToUpdate, 
-          status: 'checked-out', 
-          checkOutTime: nowFormatted, 
-          duration: 'Updated' 
-        };
-      }
-
-      setParticipants(prev => prev.map(p => p.id === userToUpdate.id ? updated : p));
-      setActiveUser(updated);
     }
   };
 
@@ -534,7 +494,7 @@ export default function App() {
                   color: dbStatus === 'connected' ? '#10b981' : '#f59e0b',
                   border: `1px solid ${dbStatus === 'connected' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`
                 }}>
-                  {dbStatus === 'connected' ? '✓ MongoDB Atlas Connected' : 'Local Fallback'}
+                  {dbStatus === 'connected' ? '✓ MongoDB Atlas Live' : 'Local Fallback'}
                 </span>
               </div>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Database: cse_hackathon | Active Rows: {participants.length}</p>
@@ -567,7 +527,7 @@ export default function App() {
                 className={`btn ${activeTab === 'admin' ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ padding: '8px 16px', fontSize: '0.85rem' }}
               >
-                <ShieldCheck size={16} /> 3. Admin View
+                <ShieldCheck size={16} /> 3. Admin View ({participants.length})
               </button>
             </nav>
           </div>
@@ -701,7 +661,7 @@ export default function App() {
                       <input
                         type="text"
                         required
-                        placeholder="e.g. TEAM-104"
+                        placeholder="e.g. TEAM-105"
                         value={formData.teamNumber}
                         onChange={e => setFormData({ ...formData, teamNumber: e.target.value })}
                         style={{ fontWeight: 700 }}
