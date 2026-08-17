@@ -20,37 +20,27 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Helper function to calculate duration in between Check-In and Check-Out
-function calculateInBetweenDuration(checkInDateStr, checkOutDateStr) {
-  try {
-    const inDate = new Date(checkInDateStr);
-    const outDate = new Date(checkOutDateStr);
-    const diffMs = Math.abs(outDate - inDate);
-    if (isNaN(diffMs)) return 'N/A';
+// Helper function to format duration milliseconds into readable text string
+function formatDurationMs(totalMs) {
+  if (!totalMs || totalMs <= 0) return '0s';
+  const diffSecs = Math.floor(totalMs / 1000);
+  const hours = Math.floor(diffSecs / 3600);
+  const minutes = Math.floor((diffSecs % 3600) / 60);
+  const seconds = diffSecs % 60;
 
-    const diffSecs = Math.floor(diffMs / 1000);
-    const hours = Math.floor(diffSecs / 3600);
-    const minutes = Math.floor((diffSecs % 3600) / 60);
-    const seconds = diffSecs % 60;
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
 
-    const parts = [];
-    if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
-    parts.push(`${seconds}s`);
-
-    return parts.join(' ');
-  } catch (e) {
-    return 'N/A';
-  }
+  return parts.join(' ');
 }
 
 // MongoDB Database Cluster Connection Handler
 async function connectToMongoCluster() {
   console.log('Connecting to MongoDB Atlas Cluster...');
   try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000
-    });
+    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 4000 });
     console.log('✓ Successfully connected to MongoDB Atlas Cluster (srv: hud8s5x.mongodb.net / cse_hackathon)');
   } catch (srvErr) {
     console.warn('⚠ Atlas SRV lookup failed, falling back to direct Cluster Replica Set Seeds:', srvErr.message);
@@ -108,18 +98,20 @@ app.post('/api/participants/register', async (req, res) => {
       status: 'registered',
       checkInTime: null,
       checkOutTime: null,
-      duration: null
+      duration: null,
+      totalDurationMs: 0,
+      sessionCount: 0
     });
 
     await newParticipant.save();
-    console.log(`✓ Saved to MongoDB Database: Team ${formattedTeamNumber} - ${name} (${userId})`);
+    console.log(`✓ Saved Row to MongoDB Atlas: Team ${formattedTeamNumber} - ${name} (${userId})`);
     res.status(201).json(newParticipant);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Process Check-In & Check-Out scan with explicit confirmations & duration calculation
+// 3. Process Repeatable Multi-Cycle Check-In / Check-Out Scans
 app.post('/api/participants/scan', async (req, res) => {
   try {
     const { targetUserId } = req.body;
@@ -145,30 +137,38 @@ app.post('/api/participants/scan', async (req, res) => {
     let scanType = 'check-in';
     let message = '';
 
-    if (participant.status === 'registered') {
-      // 1st SCAN -> CHECK-IN
+    if (participant.status === 'registered' || participant.status === 'checked-out') {
+      // START / REPEAT CYCLE -> CHECK-IN
       scanType = 'check-in';
       participant.status = 'checked-in';
       participant.checkInTime = nowFormatted;
-      participant.duration = 'Active';
-      message = `✓ Check-In Confirmed for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
+      participant.checkOutTime = null; // reset checkOutTime for new session
+      participant.sessionCount = (participant.sessionCount || 0) + 1;
+      
+      message = `✓ Check-In Confirmed (Session #${participant.sessionCount}) for Team ${participant.teamNumber} (${participant.name}) at ${nowFormatted}`;
 
     } else if (participant.status === 'checked-in') {
-      // 2nd SCAN -> CHECK-OUT (Calculates In-Between Duration)
+      // COMPLETE CYCLE -> CHECK-OUT (Calculate & Add Session Duration automatically)
       scanType = 'check-out';
       participant.status = 'checked-out';
       participant.checkOutTime = nowFormatted;
 
-      const durationStr = calculateInBetweenDuration(participant.checkInTime, nowFormatted);
-      participant.duration = durationStr;
+      // Calculate elapsed milliseconds for this session
+      let sessionMs = 60000; // default 1 min fallback if date parsing differs
+      try {
+        const inDate = new Date(participant.checkInTime);
+        const outDate = new Date(nowFormatted);
+        const diffMs = Math.abs(outDate - inDate);
+        if (!isNaN(diffMs) && diffMs > 0) sessionMs = diffMs;
+      } catch (e) {}
 
-      message = `✓✓ Check-Out Confirmed for Team ${participant.teamNumber} (${participant.name}). Total In-Between Time: ${durationStr}`;
+      const updatedTotalMs = (participant.totalDurationMs || 0) + sessionMs;
+      participant.totalDurationMs = updatedTotalMs;
+      
+      const readableDuration = formatDurationMs(updatedTotalMs);
+      participant.duration = readableDuration;
 
-    } else {
-      return res.status(400).json({
-        message: `ℹ Team ${participant.teamNumber} (${participant.name}) has already completed attendance! Total Duration: ${participant.duration || 'Completed'}`,
-        participant
-      });
+      message = `✓✓ Check-Out Confirmed (Session #${participant.sessionCount}) for Team ${participant.teamNumber} (${participant.name}). Total Cumulative In-Between Time: ${readableDuration}`;
     }
 
     // Create interconnected ScanLog entry
@@ -181,11 +181,11 @@ app.post('/api/participants/scan', async (req, res) => {
 
     await scanLog.save();
 
-    // Link ScanLog reference into Participant
+    // Link ScanLog reference into Participant document
     participant.scanLogs.push(scanLog._id);
     await participant.save();
 
-    console.log(`✓ Updated Cluster Record & ScanLog: Team ${participant.teamNumber} - ${participant.name} [${scanType.toUpperCase()}]`);
+    console.log(`✓ MongoDB Atlas Row Updated: Team ${participant.teamNumber} - ${participant.name} [${scanType.toUpperCase()} - Session #${participant.sessionCount}]`);
 
     res.json({
       message,
