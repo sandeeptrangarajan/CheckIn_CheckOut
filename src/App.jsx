@@ -22,37 +22,15 @@ import {
   ShieldCheck,
   RefreshCw,
   AlertCircle,
-  Upload
+  Database
 } from 'lucide-react';
 
+const API_BASE_URL = 'http://localhost:5000/api';
 const COMMON_EVENT_QR_PAYLOAD = 'HACKATHON-GATE-2026';
 
-const INITIAL_PARTICIPANTS = [
-  {
-    id: 'USER-1001',
-    name: 'Aarav Sharma',
-    email: 'aarav.s@example.com',
-    section: 'CSE-A',
-    status: 'checked-in',
-    checkInTime: '17/08/2026, 09:15 AM',
-    checkOutTime: null,
-  },
-  {
-    id: 'USER-1002',
-    name: 'Ananya Patel',
-    email: 'ananya.p@example.com',
-    section: 'ECE-B',
-    status: 'checked-out',
-    checkInTime: '17/08/2026, 09:30 AM',
-    checkOutTime: '17/08/2026, 12:00 PM',
-  }
-];
-
 export default function App() {
-  const [participants, setParticipants] = useState(() => {
-    const saved = localStorage.getItem('hackathon_manual_excel_v9');
-    return saved ? JSON.parse(saved) : INITIAL_PARTICIPANTS;
-  });
+  const [participants, setParticipants] = useState([]);
+  const [dbStatus, setDbStatus] = useState('connecting'); // 'connecting' | 'connected' | 'offline'
 
   const [activeTab, setActiveTab] = useState('register'); // 'register' | 'scanner' | 'admin'
 
@@ -73,9 +51,37 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Auto-sync state to LocalStorage
+  // Fetch all interconnected participant data from MongoDB API on mount
+  const fetchParticipantsFromMongo = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/participants`);
+      if (res.ok) {
+        const data = await res.json();
+        setParticipants(data.map(p => ({
+          ...p,
+          id: p.userId || p._id
+        })));
+        setDbStatus('connected');
+      } else {
+        throw new Error('API request failed');
+      }
+    } catch (err) {
+      console.warn('MongoDB API offline, fallback to LocalStorage:', err);
+      setDbStatus('offline');
+      const saved = localStorage.getItem('hackathon_mongo_backup_v10');
+      if (saved) setParticipants(JSON.parse(saved));
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem('hackathon_manual_excel_v9', JSON.stringify(participants));
+    fetchParticipantsFromMongo();
+  }, []);
+
+  // Sync state fallback to LocalStorage
+  useEffect(() => {
+    if (participants.length > 0) {
+      localStorage.setItem('hackathon_mongo_backup_v10', JSON.stringify(participants));
+    }
   }, [participants]);
 
   // Generate Common Static Master QR Code
@@ -116,27 +122,28 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Manual Export to Excel (NO AUTOMATIC EXPORT DOWNLOADS)
+  // Manual Export to Excel
   const exportToExcelManual = () => {
     if (participants.length === 0) {
-      alert('No participant records to export.');
+      alert('No participant records in MongoDB database to export.');
       return;
     }
 
     const exportData = participants.map((p, idx) => ({
       'S.No': idx + 1,
-      'User ID': p.id,
+      'User ID': p.id || p.userId,
       'Full Name': p.name,
       'Email Address': p.email,
       'Class/Section': p.section,
       'Status': p.status.toUpperCase(),
       'Check-In Time': p.checkInTime || 'Pending',
       'Check-Out Time': p.checkOutTime || 'Pending',
+      'Interconnected Logs': p.scanLogs ? p.scanLogs.length : 0
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Roster');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'MongoDB Attendance');
 
     worksheet['!cols'] = [
       { wch: 6 },
@@ -147,47 +154,74 @@ export default function App() {
       { wch: 14 },
       { wch: 22 },
       { wch: 22 },
+      { wch: 20 },
     ];
 
-    XLSX.writeFile(workbook, `Hackathon_Attendance_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(workbook, `MongoDB_Hackathon_Attendance_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
-  // 1 & 2. Details Entry -> Switch to Scanner Terminal
-  const handleRegisterUser = (e) => {
+  // 1 & 2. Details Entry -> Register to MongoDB & Launch Scanner Terminal
+  const handleRegisterUser = async (e) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim() || !formData.section.trim()) {
-      alert('Please fill out all details.');
+      alert('Please fill out all fields.');
       return;
     }
 
-    const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newUser = {
-      id: userId,
-      name: formData.name.trim(),
-      email: formData.email.trim(),
-      section: formData.section.trim(),
-      status: 'registered',
-      checkInTime: null,
-      checkOutTime: null,
-    };
+    try {
+      const res = await fetch(`${API_BASE_URL}/participants/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          section: formData.section.trim()
+        })
+      });
 
-    setParticipants(prev => [newUser, ...prev]);
-    setActiveUser(newUser);
-    setFormData({ name: '', email: '', section: '' });
-    
-    setActiveTab('scanner');
-    setScanNotice({
-      type: 'info',
-      title: `Registered: ${newUser.name}`,
-      message: `Scanner terminal ready. Scan the common QR code to Check-In.`
-    });
+      if (res.ok) {
+        const newUser = await res.json();
+        const formattedUser = { ...newUser, id: newUser.userId };
+        
+        setParticipants(prev => [formattedUser, ...prev]);
+        setActiveUser(formattedUser);
+        setFormData({ name: '', email: '', section: '' });
+        
+        setActiveTab('scanner');
+        setScanNotice({
+          type: 'info',
+          title: `MongoDB Saved: ${formattedUser.name}`,
+          message: `User created in MongoDB database. Scanner terminal ready!`
+        });
 
-    confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
+        confetti({ particleCount: 50, spread: 50, origin: { y: 0.6 } });
+      } else {
+        throw new Error('Registration failed');
+      }
+    } catch (err) {
+      console.warn('Fallback offline registration:', err);
+      const userId = `USER-${Math.floor(1000 + Math.random() * 9000)}`;
+      const newUser = {
+        id: userId,
+        userId,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        section: formData.section.trim(),
+        status: 'registered',
+        checkInTime: null,
+        checkOutTime: null,
+      };
+
+      setParticipants(prev => [newUser, ...prev]);
+      setActiveUser(newUser);
+      setFormData({ name: '', email: '', section: '' });
+      setActiveTab('scanner');
+    }
   };
 
-  // Core Scan Transition Logic (1st scan = Check-In, 2nd scan = Check-Out)
-  const processScanForUser = (targetUserId) => {
-    const userToUpdate = participants.find(p => p.id === targetUserId) || activeUser;
+  // Core Interconnected MongoDB Scan Transition Processor
+  const processScanForUser = async (targetUserId) => {
+    const userToUpdate = participants.find(p => p.id === targetUserId || p.userId === targetUserId) || activeUser;
     if (!userToUpdate) {
       setScanNotice({
         type: 'error',
@@ -197,59 +231,62 @@ export default function App() {
       return;
     }
 
-    const nowFormatted = new Date().toLocaleString('en-IN', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: true
-    });
-
     playBeep();
 
-    if (userToUpdate.status === 'registered') {
-      // 1st SCAN -> CHECK-IN
-      const updated = {
-        ...userToUpdate,
-        status: 'checked-in',
-        checkInTime: nowFormatted,
-      };
+    try {
+      const res = await fetch(`${API_BASE_URL}/participants/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: userToUpdate.id || userToUpdate.userId })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        const updatedUser = { ...result.participant, id: result.participant.userId };
+
+        setParticipants(prev => prev.map(p => (p.id === updatedUser.id || p.userId === updatedUser.id) ? updatedUser : p));
+        setActiveUser(updatedUser);
+
+        setScanNotice({
+          type: updatedUser.status === 'checked-in' ? 'check-in' : 'check-out',
+          title: result.message,
+          message: `Connected MongoDB ScanLog created & linked for ${updatedUser.name}`
+        });
+
+        if (updatedUser.status === 'checked-in') {
+          confetti({ particleCount: 50, spread: 50, origin: { y: 0.7 } });
+        }
+      } else {
+        const errData = await res.json();
+        setScanNotice({
+          type: 'warning',
+          title: 'MongoDB Scan Message',
+          message: errData.message || errData.error
+        });
+      }
+    } catch (err) {
+      console.warn('Fallback offline scan:', err);
+      // Offline transition fallback
+      const nowFormatted = new Date().toLocaleString('en-IN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+
+      let updated;
+      if (userToUpdate.status === 'registered') {
+        updated = { ...userToUpdate, status: 'checked-in', checkInTime: nowFormatted };
+      } else if (userToUpdate.status === 'checked-in') {
+        updated = { ...userToUpdate, status: 'checked-out', checkOutTime: nowFormatted };
+      } else {
+        updated = userToUpdate;
+      }
 
       setParticipants(prev => prev.map(p => p.id === userToUpdate.id ? updated : p));
       setActiveUser(updated);
-
-      setScanNotice({
-        type: 'check-in',
-        title: `✓ 1st Scan: CHECKED-IN`,
-        message: `${userToUpdate.name} (${userToUpdate.section}) checked in at ${nowFormatted}`
-      });
-
-      confetti({ particleCount: 50, spread: 50, origin: { y: 0.7 } });
-
-    } else if (userToUpdate.status === 'checked-in') {
-      // 2nd SCAN -> CHECK-OUT
-      const updated = {
-        ...userToUpdate,
-        status: 'checked-out',
-        checkOutTime: nowFormatted,
-      };
-
-      setParticipants(prev => prev.map(p => p.id === userToUpdate.id ? updated : p));
-      setActiveUser(updated);
-
-      setScanNotice({
-        type: 'check-out',
-        title: `✓✓ 2nd Scan: CHECKED-OUT`,
-        message: `${userToUpdate.name} checked out at ${nowFormatted}`
-      });
-
-    } else if (userToUpdate.status === 'checked-out') {
-      setScanNotice({
-        type: 'warning',
-        title: `ℹ Attendance Completed`,
-        message: `${userToUpdate.name} has already completed Check-In (${userToUpdate.checkInTime}) & Check-Out (${userToUpdate.checkOutTime}).`
-      });
     }
   };
 
-  // Robust Camera Scanner Startup using Html5Qrcode
+  // Camera Reader Startup
   const startCameraScanner = async () => {
     setCameraError(null);
     setIsCameraActive(true);
@@ -259,11 +296,8 @@ export default function App() {
         const container = document.getElementById('camera-stream-div');
         if (!container) return;
 
-        // Clean up any existing instances
         if (html5QrCodeRef.current) {
-          try {
-            await html5QrCodeRef.current.stop();
-          } catch (e) {}
+          try { await html5QrCodeRef.current.stop(); } catch (e) {}
         }
 
         const html5QrCode = new Html5Qrcode('camera-stream-div');
@@ -271,40 +305,22 @@ export default function App() {
 
         let lastScanTime = 0;
 
-        // Get available cameras
-        const devices = await Html5Qrcode.getCameras();
-        let cameraId = { facingMode: 'environment' };
-
-        if (devices && devices.length > 0) {
-          // Prefer back camera if available
-          const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear'));
-          cameraId = backCamera ? backCamera.id : devices[0].id;
-        }
-
         await html5QrCode.start(
-          cameraId,
+          { facingMode: 'environment' },
           { fps: 10, qrbox: { width: 240, height: 240 } },
           (decodedText) => {
             const now = Date.now();
-            if (now - lastScanTime < 2500) return; // Prevent duplicate rapid scans
+            if (now - lastScanTime < 2500) return;
             lastScanTime = now;
 
             if (activeUser) {
-              processScanForUser(activeUser.id);
-            } else {
-              setScanNotice({
-                type: 'info',
-                title: 'QR Code Scanned',
-                message: 'Scan detected! Please select a user below to log attendance.'
-              });
+              processScanForUser(activeUser.id || activeUser.userId);
             }
           },
-          (errorMessage) => {
-            // Ignore scan attempt frame failures
-          }
+          (err) => {}
         );
       } catch (err) {
-        console.error('Webcam initialization failed:', err);
+        console.error('Camera initialization failed:', err);
         setCameraError(err.message || 'Camera access error');
         setIsCameraActive(false);
       }
@@ -318,36 +334,20 @@ export default function App() {
         if (html5QrCodeRef.current.isScanning) {
           await html5QrCodeRef.current.stop();
         }
-      } catch (err) {
-        console.error('Camera stop error:', err);
-      }
+      } catch (err) {}
       html5QrCodeRef.current = null;
     }
     setIsCameraActive(false);
   };
 
-  // Scan QR Code Image File Upload (Fallback for hardware blocked cameras)
-  const handleFileUploadScan = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleDelete = async (id) => {
+    if (window.confirm('Delete this record from MongoDB database?')) {
+      try {
+        await fetch(`${API_BASE_URL}/participants/${id}`, { method: 'DELETE' });
+      } catch (e) {}
 
-    try {
-      const html5QrCode = new Html5Qrcode('camera-stream-div-hidden');
-      const decodedText = await html5QrCode.scanFile(file, true);
-      if (activeUser) {
-        processScanForUser(activeUser.id);
-      } else {
-        alert(`QR Code Scanned: ${decodedText}`);
-      }
-    } catch (err) {
-      alert('Could not decode QR code from selected image file.');
-    }
-  };
-
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this record?')) {
-      setParticipants(prev => prev.filter(p => p.id !== id));
-      if (activeUser && activeUser.id === id) {
+      setParticipants(prev => prev.filter(p => p.id !== id && p.userId !== id && p._id !== id));
+      if (activeUser && (activeUser.id === id || activeUser.userId === id)) {
         setActiveUser(null);
       }
     }
@@ -365,7 +365,7 @@ export default function App() {
   const filteredParticipants = participants.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (p.id && p.id.toLowerCase().includes(searchQuery.toLowerCase())) ||
                           p.section.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
     return matchesSearch && matchesStatus;
@@ -373,20 +373,32 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#090d16', color: '#f8fafc' }}>
-      <div id="camera-stream-div-hidden" style={{ display: 'none' }}></div>
 
       {/* Top Navbar */}
       <header className="glass-panel" style={{ borderRadius: 0, borderTop: 0, borderLeft: 0, borderRight: 0, padding: '16px 32px', position: 'sticky', top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)' }}>
-              <Camera style={{ width: '24px', height: '24px', color: '#fff' }} />
+              <Database style={{ width: '24px', height: '24px', color: '#fff' }} />
             </div>
             <div>
-              <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                HACKPORTAL Live Gate
-              </h1>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Details Entry ➔ Live Camera Scanner ➔ Manual Excel Export</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h1 style={{ fontSize: '1.3rem', fontWeight: 800, background: 'linear-gradient(90deg, #fff 0%, #cbd5e1 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                  HACKPORTAL MongoDB
+                </h1>
+                <span style={{
+                  padding: '3px 10px',
+                  borderRadius: '12px',
+                  fontSize: '0.7rem',
+                  fontWeight: 800,
+                  background: dbStatus === 'connected' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                  color: dbStatus === 'connected' ? '#10b981' : '#f59e0b',
+                  border: `1px solid ${dbStatus === 'connected' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`
+                }}>
+                  {dbStatus === 'connected' ? 'MongoDB Atlas Connected' : 'Local Fallback'}
+                </span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Interconnected Participant & ScanLog Schemas</p>
             </div>
           </div>
 
@@ -455,7 +467,7 @@ export default function App() {
                 </div>
                 <div>
                   <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Enter User Details</h2>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Submit details to immediately launch the live camera scanner</p>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Data saves directly to MongoDB Atlas database</p>
                 </div>
               </div>
 
@@ -494,7 +506,7 @@ export default function App() {
                 </div>
 
                 <button type="submit" className="btn btn-primary" style={{ marginTop: '10px', padding: '14px', width: '100%', fontWeight: 700 }}>
-                  <Camera size={18} /> Submit Details & Launch Camera Scanner
+                  <Database size={18} /> Save to MongoDB & Launch Camera Scanner
                 </button>
               </form>
             </div>
@@ -504,7 +516,7 @@ export default function App() {
         {/* TAB 2: LIVE CAMERA SCANNER & COMMON QR CODE */}
         {activeTab === 'scanner' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '32px', maxWidth: '1100px', margin: '0 auto' }}>
-            
+
             {/* Camera Scanner Container */}
             <div className="glass-panel" style={{ padding: '32px', textAlign: 'center' }}>
               <div style={{ display: 'inline-flex', padding: '10px', background: 'rgba(99, 102, 241, 0.15)', borderRadius: '50%', color: 'var(--primary)', marginBottom: '12px' }}>
@@ -528,7 +540,7 @@ export default function App() {
 
                   {cameraError && (
                     <p style={{ color: '#f87171', fontSize: '0.78rem', marginTop: '12px' }}>
-                      ⚠ {cameraError}. Ensure webcam permissions are allowed or use the Scan Button below.
+                      ⚠ {cameraError}
                     </p>
                   )}
                 </div>
@@ -537,8 +549,6 @@ export default function App() {
                   <button onClick={stopCameraScanner} className="btn btn-danger btn-sm" style={{ marginBottom: '12px' }}>
                     <StopCircle size={14} /> Stop Camera
                   </button>
-
-                  {/* Html5Qrcode Target Element */}
                   <div id="camera-stream-div" style={{ width: '100%', maxWidth: '380px', margin: '0 auto', minHeight: '260px', borderRadius: '14px', border: '2px solid var(--primary)', overflow: 'hidden' }}></div>
                 </div>
               )}
@@ -548,17 +558,17 @@ export default function App() {
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
                   Select User to Process Attendance Scan:
                 </label>
-                
+
                 <select
-                  value={activeUser ? activeUser.id : ''}
+                  value={activeUser ? (activeUser.id || activeUser.userId) : ''}
                   onChange={e => {
-                    const found = participants.find(p => p.id === e.target.value);
+                    const found = participants.find(p => p.id === e.target.value || p.userId === e.target.value);
                     if (found) setActiveUser(found);
                   }}
                   style={{ marginBottom: '12px' }}
                 >
                   {participants.map(p => (
-                    <option key={p.id} value={p.id}>
+                    <option key={p.id || p.userId} value={p.id || p.userId}>
                       {p.name} ({p.section}) - Status: {p.status.toUpperCase()}
                     </option>
                   ))}
@@ -566,24 +576,16 @@ export default function App() {
 
                 {activeUser && (
                   <button
-                    onClick={() => processScanForUser(activeUser.id)}
+                    onClick={() => processScanForUser(activeUser.id || activeUser.userId)}
                     disabled={activeUser.status === 'checked-out'}
                     className={`btn ${activeUser.status === 'registered' ? 'btn-success' : activeUser.status === 'checked-in' ? 'btn-danger' : 'btn-secondary'}`}
-                    style={{ width: '100%', padding: '12px', marginBottom: '12px' }}
+                    style={{ width: '100%', padding: '12px' }}
                   >
                     {activeUser.status === 'registered' && <><LogIn size={18} /> Scan Common QR (1st Scan = Check-In)</>}
                     {activeUser.status === 'checked-in' && <><LogOut size={18} /> Scan Common QR (2nd Scan = Check-Out)</>}
                     {activeUser.status === 'checked-out' && <>✓ Attendance Completed</>}
                   </button>
                 )}
-
-                {/* Upload QR Image Fallback */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                  <label className="btn btn-secondary btn-sm" style={{ flex: 1, cursor: 'pointer' }}>
-                    <Upload size={14} /> Scan Image File
-                    <input type="file" accept="image/*" onChange={handleFileUploadScan} style={{ display: 'none' }} />
-                  </label>
-                </div>
               </div>
             </div>
 
@@ -606,7 +608,7 @@ export default function App() {
 
               {activeUser && (
                 <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', textAlign: 'left', fontSize: '0.8rem' }}>
-                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>ACTIVE USER STATUS:</div>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>MONGODB USER RECORD:</div>
                   <div style={{ fontWeight: 700, color: '#fff' }}>{activeUser.name} ({activeUser.section})</div>
                   <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
                     <span style={{ color: activeUser.checkInTime ? '#34d399' : 'var(--text-dim)' }}>
@@ -623,22 +625,27 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: ADMIN DASHBOARD & MANUAL EXCEL EXPORT ONLY */}
+        {/* TAB 3: ADMIN DASHBOARD */}
         {activeTab === 'admin' && (
           <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-            
-            {/* Top Bar with Explicit Manual Export Button Only */}
+
+            {/* Top Bar */}
             <div className="glass-panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
               <div>
-                <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Admin Attendance Master Control</h2>
+                <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Admin MongoDB Master Control</h2>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  View all participant records and export to Excel spreadsheet on demand
+                  Interconnected data from MongoDB Atlas database (<strong style={{ color: '#10b981' }}>cse_hackathon</strong>)
                 </p>
               </div>
 
-              <button onClick={exportToExcelManual} className="btn btn-success" style={{ height: '42px', fontWeight: 700 }}>
-                <FileSpreadsheet size={18} /> Export to Excel (.xlsx)
-              </button>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={fetchParticipantsFromMongo} className="btn btn-secondary btn-sm">
+                  <RefreshCw size={14} /> Refresh DB Data
+                </button>
+                <button onClick={exportToExcelManual} className="btn btn-success" style={{ height: '42px', fontWeight: 700 }}>
+                  <FileSpreadsheet size={18} /> Export to Excel (.xlsx)
+                </button>
+              </div>
             </div>
 
             {/* Metrics */}
@@ -686,12 +693,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* Admin Table Roster */}
+            {/* Table */}
             <div className="glass-panel" style={{ padding: '28px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                 <div>
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Attendance Master Roster</h2>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Real-time attendance logs stored in application state</p>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>MongoDB Roster & Interconnected Logs</h2>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Each record links directly to Mongoose `Participant` & `ScanLog` schemas</p>
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -729,21 +736,22 @@ export default function App() {
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>STATUS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-IN TIME</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600 }}>CHECK-OUT TIME</th>
+                      <th style={{ padding: '14px 16px', fontWeight: 600 }}>INTERCONNECTED LOGS</th>
                       <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>ACTIONS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredParticipants.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                          No records found.
+                        <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                          No records in MongoDB database.
                         </td>
                       </tr>
                     ) : (
                       filteredParticipants.map(p => (
-                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <tr key={p.id || p.userId} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                           <td style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>
-                            {p.id}
+                            {p.id || p.userId}
                           </td>
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{p.name}</div>
@@ -777,16 +785,21 @@ export default function App() {
                           <td style={{ padding: '14px 16px', color: p.checkOutTime ? 'var(--accent-rose)' : 'var(--text-dim)', fontSize: '0.8rem' }}>
                             {p.checkOutTime || '-'}
                           </td>
+                          <td style={{ padding: '14px 16px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            <span style={{ background: 'rgba(99, 102, 241, 0.15)', padding: '2px 8px', borderRadius: '10px', border: '1px solid rgba(99, 102, 241, 0.3)', color: '#818cf8', fontWeight: 600 }}>
+                              {p.scanLogs ? `${p.scanLogs.length} ScanLogs` : '0 ScanLogs'}
+                            </span>
+                          </td>
                           <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                               <button
-                                onClick={() => processScanForUser(p.id)}
+                                onClick={() => processScanForUser(p.id || p.userId)}
                                 className={`btn btn-sm ${p.status === 'registered' ? 'btn-success' : 'btn-danger'}`}
                               >
                                 <ScanLine size={14} /> {p.status === 'registered' ? 'Scan In' : p.status === 'checked-in' ? 'Scan Out' : 'Rescan'}
                               </button>
                               <button
-                                onClick={() => handleDelete(p.id)}
+                                onClick={() => handleDelete(p.id || p._id || p.userId)}
                                 className="btn btn-danger btn-sm"
                                 style={{ padding: '6px 8px' }}
                               >
