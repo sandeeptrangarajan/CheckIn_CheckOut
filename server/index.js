@@ -88,6 +88,38 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Analytics & Statistics Endpoint
+app.get('/api/stats', async (req, res) => {
+  try {
+    const participants = await Participant.find();
+    const scanLogsCount = await ScanLog.countDocuments();
+
+    const sectionBreakdown = {};
+    let totalSessions = 0;
+
+    participants.forEach(p => {
+      const sec = p.section || 'Unassigned';
+      sectionBreakdown[sec] = (sectionBreakdown[sec] || 0) + 1;
+      totalSessions += (p.sessionCount || 0);
+    });
+
+    const stats = {
+      totalStudents: participants.length,
+      checkedIn: participants.filter(p => p.status === 'checked-in').length,
+      checkedOut: participants.filter(p => p.status === 'checked-out').length,
+      registeredOnly: participants.filter(p => p.status === 'registered').length,
+      totalSessions,
+      totalScanAuditLogs: scanLogsCount,
+      sectionBreakdown,
+      timestamp: new Date().toISOString()
+    };
+
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 1. Get all participants with populated scan history logs for Admin view
 app.get('/api/participants', async (req, res) => {
   try {
