@@ -31,5 +31,7 @@ An interactive full-stack QR code attendance system built with **React (Vite)**,
    node seedData.js
    ```
 
-## 🔗 Repository
-[https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git](https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git)
+## 🔗 Repository & Maintainer
+- **Author**: Sandeep Rangarajan ([`sandeeptrangarajan@gmail.com`](mailto:sandeeptrangarajan@gmail.com))
+- **GitHub Repository**: [https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git](https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git)
+- **Last Verified**: August 2026
