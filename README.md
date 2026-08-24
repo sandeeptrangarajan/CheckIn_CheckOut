@@ -35,3 +35,4 @@ An interactive full-stack QR code attendance system built with **React (Vite)**,
 - **Maintainer**: Sandeep Rangarajan ([`sandeeptrangarajan@gmail.com`](mailto:sandeeptrangarajan@gmail.com))
 - **GitHub Account**: [@sandeeptrangarajan](https://github.com/sandeeptrangarajan)
 - **Repository URL**: [https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git](https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git)
+- **Status**: Production Verified
