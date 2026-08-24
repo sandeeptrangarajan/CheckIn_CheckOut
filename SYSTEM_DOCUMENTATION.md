@@ -64,7 +64,9 @@ The **Hackathon Gate Attendance Portal** is a production-ready, full-stack event
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Backend & MongoDB Atlas connection status |
+| `GET` | `/api/stats` | Analytics metrics & section breakdown |
 | `GET` | `/api/participants` | Fetch all team rows with populated scan logs |
+| `POST` | `/api/participants/login` | Team login & quick scanner redirection |
 | `POST` | `/api/participants/register` | Create a new team participant row in MongoDB |
 | `POST` | `/api/participants/scan` | Process 1st Scan (Check-In) / 2nd Scan (Check-Out & calculate duration) |
 | `DELETE` | `/api/participants/:id` | Delete team row & associated scan logs |
@@ -96,3 +98,4 @@ npm run dev
 
 ## 🌐 GitHub Repository
 - **URL**: [https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git](https://github.com/sandeeptrangarajan/CheckIn_CheckOut.git)
+- **Maintainer**: Sandeep Rangarajan
