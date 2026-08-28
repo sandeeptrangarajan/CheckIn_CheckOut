@@ -120,6 +120,19 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// Audit Scan Logs Endpoint
+app.get('/api/logs', async (req, res) => {
+  try {
+    const logs = await ScanLog.find()
+      .populate('participant', 'teamNumber name email section status')
+      .sort({ createdAt: -1 })
+      .limit(100);
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 1. Get all participants with populated scan history logs for Admin view
 app.get('/api/participants', async (req, res) => {
   try {
